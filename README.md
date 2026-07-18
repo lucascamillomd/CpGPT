@@ -35,15 +35,9 @@ CpGPT is a foundation model for DNA methylation, trained on genome-wide DNA meth
 
 ## 🚀 Quick Setup
 
-### Prerequisites
-
-- Python 3.10–3.12
-- [uv](https://docs.astral.sh/uv/)
-- No command-line client is required for model weights or dependencies; the AWS CLI is optional for CpGCorpus dataset downloads
-
 ### Installation Instructions
 
-We recommend using `uv` for installation:
+We recommend using [uv](https://docs.astral.sh/uv/) for installation:
 
 ```bash
 # Clone the repository
