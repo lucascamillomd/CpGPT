@@ -1,4 +1,5 @@
 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
+_target_: cpgpt.data.cpgpt_datamodule.CpGPTDataModule
 batch_size: 4
 
 dna_llm: nucleotide-transformer-v2-500m-multi-species

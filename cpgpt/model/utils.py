@@ -1,5 +1,4 @@
 import contextlib
-import math
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -8,29 +7,6 @@ from torch import nn
 
 if TYPE_CHECKING:
     import pytorch_lightning as pl
-
-
-def cosine_beta_schedule(timesteps: int, s: float = 0.008) -> torch.Tensor:
-    """Create a cosine schedule for diffusion model noise levels.
-
-    Implements the cosine schedule as proposed in https://arxiv.org/abs/2102.09672.
-    This schedule helps ensure smooth transitions between timesteps in the diffusion process.
-
-    Args:
-        timesteps (int): Number of timesteps in the diffusion process.
-        s (float, optional): Small offset to prevent singularity. Defaults to 0.008.
-
-    Returns:
-        torch.Tensor: Beta values for each timestep, shape (timesteps,).
-
-    """
-    steps = timesteps + 1
-    t = torch.linspace(0, timesteps, steps) / timesteps
-    alphas_cumprod = torch.cos(((t + s) / (1 + s)) * (math.pi / 2)) ** 2
-    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]  # Normalize to start at 1
-
-    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-    return torch.clip(betas, min=1e-7, max=0.999)
 
 
 class SaveDataModuleHyperparametersCallback(Callback):

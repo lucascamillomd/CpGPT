@@ -1,10 +1,136 @@
-[tool.poetry]
+[project]
 name = "CpGPT"
-version = "0.0.7"
+version = "0.0.8"
 description = "CpGPT: A Foundation Model for DNA Methylation"
-authors = ["Lucas Paulo de Lima Camillo <lucas_camillo@alumni.brown.edu>"]
-license = "Non-commercial"
-include = ["README.md", ".project-root", "poetry.lock"]
+authors = [{ name = "Lucas Paulo de Lima Camillo", email = "lucas_camillo@alumni.brown.edu" }]
+requires-python = ">=3.10,<3.14"
+license = { file = "LICENSE" }
+dependencies = [
+    "transformers>=4.44.2",
+    "torchvision>=0.20.1",
+    "lightning>=2.2.0",
+    "fastapi>=0.112.0,<0.115",
+    "torch>=2.2.0,<=2.6.0",
+    "torchmetrics>=1.5.2",
+    "torchtune==0.3.1",
+    "hydra-core>=1.3.2",
+    "hydra-colorlog>=1.2.0",
+    "rich>=13.8.1",
+    "loguru>=0.7.2",
+    "pyfaidx>=0.8.1.2",
+    "sqlitedict>=2.1.0",
+    "biopython>=1.84,<2",
+    "schedulefree>=1.4,<2",
+    "rootutils>=1.0.7,<2",
+    "boto3>=1.37.15,<2",
+    "torchao>=0.1.0",
+    "ipywidgets>=8.1.5",
+    "lifelines>=0.29.0",
+    "pyarrow>=20.0.0",
+    "nucleotide-transformer",
+    "litmodels>=0.1.8",
+    "litlogger>=0.1.7",
+    "leidenalg>=0.11.0",
+    "igraph>=1.0.0",
+    "pyaging>=0.1.28",
+]
+
+[project.urls]
+homepage = "https://github.com/lucascamillomd/CpGPT"
+repository = "https://github.com/lucascamillomd/CpGPT"
+
+[project.scripts]
+cpgpt-train = "cpgpt.train:main"
+cpgpt-eval = "cpgpt.eval:main"
+
+[dependency-groups]
+dev = [
+    "hydra-optuna-sweeper>=1.2.0",
+    "tomli>=2.2.1,<3",
+    "toml>=0.10.2,<0.11",
+    "pyliftover>=0.4.1,<0.5",
+    "jupyter>=1.1.1,<2",
+    "llvmlite>=0.44.0,<0.45",
+    "seaborn>=0.13.2",
+    "umap-learn>=0.5.6",
+    "scienceplots>=2.1.1,<3",
+    "faiss-cpu>=1.9.0,<2",
+    "ipykernel>=6.29.5",
+    "pytest>=8.3.3",
+    "pytest-cov>=5.0.0",
+    "wandb>=0.18.0",
+    "sh>=2.0.7",
+    "tensorboard>=2.17.1",
+    "nvitop>=1.3.2",
+    "plotly>=5.24.1,<6",
+    "nbformat>=5.10.4,<6",
+    "geoparse>=2.0.4,<3",
+    "openpyxl>=3.1.5,<4",
+    "py2cytoscape>=0.7.1,<0.8",
+    "biolearn>=0.6.5,<0.7",
+    "einops>=0.8.0",
+    "pre-commit>=3.8.0",
+    "bandit[toml]>=1.8.0,<2",
+    "docformatter>=1.7.5,<2",
+    "scperturb>=0.1.0,<0.2",
+    "papermill>=2.6.0,<3",
+    "ete3>=3.1.3,<4",
+    "pingouin>=0.5.5,<0.6",
+    "pybedtools>=0.12.0,<0.13",
+    "imageio>=2.37.0,<3",
+    "pybiomart>=0.2.0,<0.3",
+    "gseapy>=1.1.4,<2",
+    "lion-pytorch>=0.2.3,<0.3",
+    "computage>=0.1.7,<0.2",
+    "boruta>=0.4.3,<0.5",
+    "gdown>=5.2.0,<6",
+    "pymupdf>=1.27.2.3",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+constraint-dependencies = [
+    "fastparquet<2026",  # 2026.3.0 missing x86_64 Linux wheels
+]
+dependency-metadata = [
+    { name = "nucleotide-transformer", version = "0.0.1", requires-dist = [
+        "absl-py>=1.0.0",
+        "jax>=0.6.0",
+        "jaxlib>=0.3.25",
+        "dm-haiku>=0.0.14",
+        "numpy>=1.23.5,<3.0.0",
+        "typing-extensions>=3.10.0",
+        "joblib>=1.2.0",
+        "tqdm>=4.56.0",
+        "regex>=2022.1.18",
+        "huggingface-hub>=0.23.0",
+        "anndata>=0.11.0",
+        "scanpy>=1.11.2",
+        "cellxgene-census>=1.17.0",
+        "transformers>=4.52.4",
+        "torch>=2.2.0,<=2.6.0",
+        "einops>=0.8.1",
+        "pydantic==1.10.13",
+        "flax==0.10.4",
+        "ipykernel>=6.0.0",
+        "matplotlib>=3.5.0",
+        "seaborn>=0.11.0",
+        "pyfaidx>=0.7.0",
+        "requests>=2.25.0",
+    ] },
+]
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
+
+[tool.uv.sources]
+# NOTE: dependency-metadata relaxes `numpy<2` so we can lock on Python 3.13+
+nucleotide-transformer = { git = "https://github.com/instadeepai/nucleotide-transformer" }
+
+[tool.hatch.build.targets.sdist]
 exclude = [
     "tutorials/*",
     "analysis/*",
@@ -16,84 +142,26 @@ exclude = [
     "**/.DS_Store",
 ]
 
-[tool.poetry.urls]
-homepage = "https://github.com/lcamillo/CpGPT"
-repository = "https://github.com/lcamillo/CpGPT"
+[tool.hatch.build.targets.sdist.force-include]
+"README.md" = "README.md"
+".project-root" = ".project-root"
+"uv.lock" = "uv.lock"
 
-[tool.poetry.dependencies]
-python = ">=3.10,<3.14"
-transformers = ">=4.44.2"
-torchvision = ">=0.20.1"
-lightning = ">=2.2.0"
-fastapi = ">=0.112.0,<0.115"
-torch = ">=2.2.0,<=2.6.0"
-torchmetrics = ">=1.5.2"
-torchtune = "0.3.1"
-hydra-core = ">=1.3.2"
-hydra-colorlog = ">=1.2.0"
-rich = ">=13.8.1"
-loguru = ">=0.7.2"
-pyfaidx = ">=0.8.1.2"
-sqlitedict = ">=2.1.0"
-biopython = "^1.84"
-schedulefree = "^1.4"
-rootutils = "^1.0.7"
-boto3 = "^1.37.15"
-torchao = ">=0.1.0"
-ipywidgets = ">=8.1.5"
-lifelines = ">=0.29.0"
-pyarrow = "20.0.0"
-
-[tool.poetry.group.dev.dependencies]
-hydra-optuna-sweeper = ">=1.2.0"
-tomli = "^2.2.1"
-toml = "^0.10.2"
-pyliftover = "^0.4.1"
-jupyter = "^1.1.1"
-llvmlite = "^0.44.0"
-seaborn = ">=0.13.2"
-umap-learn = ">=0.5.6"
-scienceplots = "^2.1.1"
-faiss-cpu = "^1.9.0"
-pyaging = ">=0.1.12"
-ipykernel = ">=6.29.5"
-pytest = ">=8.3.3"
-pytest-cov = ">=5.0.0"
-wandb = ">=0.18.0"
-sh = ">=2.0.7"
-tensorboard = ">=2.17.1"
-nvitop = ">=1.3.2"
-plotly = "^5.24.1"
-nbformat = "^5.10.4"
-geoparse = "^2.0.4"
-openpyxl = "^3.1.5"
-py2cytoscape = "^0.7.1"
-biolearn = "^0.6.5"
-einops = ">=0.8.0"
-pre-commit = ">=3.8.0"
-bandit = {extras = ["toml"], version = "^1.8.0"}
-docformatter = "^1.7.5"
-scperturb = "^0.1.0"
-papermill = "^2.6.0"
-ete3 = "^3.1.3"
-pygraphviz = "^1.14"
-pingouin = "^0.5.5"
-pybedtools = "^0.11.0"
-imageio = "^2.37.0"
-pybiomart = "^0.2.0"
-gseapy = "^1.1.4"
-lion-pytorch = "^0.2.3"
-computage = "^0.1.7"
-boruta = "^0.4.3"
-gdown = "^5.2.0"
+[tool.hatch.build.targets.wheel]
+exclude = [
+    "tutorials/*",
+    "analysis/*",
+    "pyaging_data/*",
+    "dependencies/*",
+    "data/*",
+    "tests/*",
+    "configs/*",
+    "**/.DS_Store",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
-
-[tool.poetry.scripts]
-cpgpt-train = "cpgpt.train:main"
-cpgpt-eval = "cpgpt.eval:main"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 addopts = [

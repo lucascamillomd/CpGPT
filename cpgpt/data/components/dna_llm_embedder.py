@@ -1,7 +1,11 @@
 import gc
 import gzip
 import json
+import multiprocessing as mp
+import os
 import shutil
+import sqlite3
+import sys
 import time
 from functools import partial
 from pathlib import Path
@@ -62,9 +66,17 @@ class DNALLMEmbedder:
         self.dna_embeddings_dir = Path(self.dependencies_dir) / "dna_embeddings"
         self.ensembl_metadata_dict: dict = {}
         self.llm_embedding_size_dict = {
+            "NTv3_650M_pre": 1536,
+            "NTv3_100M_pre": 768,
+            "NTv3_8M_pre": 256,
             "nucleotide-transformer-v2-500m-multi-species": 1024,
+            "nucleotide-transformer-v2-100m-multi-species": 1024,
+            "nucleotide-transformer-v2-50m-multi-species": 512,
             "DNABERT-2-117M": 768,
             "hyenadna-large-1m-seqlen-hf": 256,
+            "hyenadna-medium-450k-seqlen-hf": 256,
+            "hyenadna-small-32k-seqlen-hf": 256,
+            "hyenadna-tiny-1k-seqlen-d256": 256,
         }
 
         self.logger = get_class_logger(self.__class__)
@@ -210,13 +222,13 @@ class DNALLMEmbedder:
         if not torch.cuda.is_available():
             self.logger.warning("CUDA is not available. Using CPU for inference.")
 
-        if dna_llm == "nucleotide-transformer-v2-500m-multi-species":
+        if "nucleotide-transformer-v2" in dna_llm or "NTv3" in dna_llm:
             tokenizer = AutoTokenizer.from_pretrained(
-                "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species",
+                f"InstaDeepAI/{dna_llm}",
                 trust_remote_code=True,
             )
             model = AutoModelForMaskedLM.from_pretrained(
-                "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species",
+                f"InstaDeepAI/{dna_llm}",
                 trust_remote_code=True,
             )
         elif dna_llm == "DNABERT-2-117M":
@@ -230,13 +242,13 @@ class DNALLMEmbedder:
                 trust_remote_code=True,
                 config=config,
             )
-        elif dna_llm == "hyenadna-large-1m-seqlen-hf":
+        elif "hyenadna" in dna_llm:
             tokenizer = AutoTokenizer.from_pretrained(
-                "LongSafari/hyenadna-large-1m-seqlen-hf",
+                f"LongSafari/{dna_llm}",
                 trust_remote_code=True,
             )
             model = AutoModel.from_pretrained(
-                "LongSafari/hyenadna-large-1m-seqlen-hf",
+                f"LongSafari/{dna_llm}",
                 trust_remote_code=True,
             )
         else:
@@ -374,60 +386,88 @@ class DNALLMEmbedder:
             len(self.ensembl_metadata_dict[species][dna_llm][dna_context_len]),
         )
         embedding_size = self.llm_embedding_size_dict[dna_llm]
+        meta: dict = self.ensembl_metadata_dict[species][dna_llm][dna_context_len]
+        row_bytes = np.dtype("float32").itemsize * embedding_size
 
-        # Check if the permanent embeddings file (without .tmp) exists
+        checkpoint_file = Path(embeddings_file).with_suffix(".checkpoint.json")
+        checkpoint_rows = self._load_checkpoint_rows(checkpoint_file)
+
+        def _filter_meta_to_rows(max_rows: int) -> None:
+            """Filter metadata to entries with index < max_rows."""
+            nonlocal meta
+            if meta and (max(meta.values()) + 1) > max_rows:
+                filtered = {k: v for k, v in meta.items() if v < max_rows}
+                self.logger.warning(f"Dropping {len(meta) - len(filtered)} metadata entries beyond row {max_rows}.")
+                self.ensembl_metadata_dict[species][dna_llm][dna_context_len] = filtered
+                meta = filtered
+
+        # Resume from temporary mmap if it exists
+        tmp_file = Path(embeddings_file)
+        if tmp_file.exists():
+            rows_fit = tmp_file.stat().st_size // row_bytes if row_bytes else 0
+            # Only trust checkpointed rows; without checkpoint, only trust what metadata references
+            if checkpoint_rows is not None:
+                rows_trust = min(rows_fit, checkpoint_rows)
+            else:
+                rows_trust = (max(meta.values()) + 1) if meta else 0
+            _filter_meta_to_rows(rows_trust)
+            initial_size = max(initial_size, rows_fit, (max(meta.values()) + 1) if meta else 0)
+            return np.memmap(tmp_file, dtype="float32", mode="r+", shape=(rows_fit, embedding_size)), initial_size
+
+        # Load from permanent file and copy to tmp
         permanent_file = Path(embeddings_file).with_suffix("").with_suffix(".mmap")
         if permanent_file.exists():
-            self.logger.info(f"Found existing embeddings file: {permanent_file}")
-            # Load existing embeddings
-            existing_embeddings = np.memmap(
-                permanent_file,
-                dtype="float32",
-                mode="r",
-                shape=(
-                    len(self.ensembl_metadata_dict[species][dna_llm][dna_context_len]),
-                    embedding_size,
-                ),
-            )
-
-            # Create new temporary file with sufficient size
-            embeddings = np.memmap(
-                embeddings_file,
-                dtype="float32",
-                mode="w+",
-                shape=(max(initial_size, existing_embeddings.shape[0]), embedding_size),
-            )
-
-            # Copy existing embeddings to the temporary file
-            embeddings[: existing_embeddings.shape[0]] = existing_embeddings[:]
+            rows_fit = permanent_file.stat().st_size // row_bytes if row_bytes else 0
+            # Permanent file was finalized, so trust what metadata references (or checkpoint if present)
+            if checkpoint_rows is not None:
+                rows_trust = min(rows_fit, checkpoint_rows)
+            else:
+                rows_trust = (max(meta.values()) + 1) if meta else 0
+            _filter_meta_to_rows(rows_trust)
+            n_existing = min(rows_fit, max(meta.values()) + 1) if meta else 0
+            existing = np.memmap(permanent_file, dtype="float32", mode="r", shape=(n_existing, embedding_size))
+            initial_size = max(10000, n_existing, len(meta))
+            embeddings = np.memmap(embeddings_file, dtype="float32", mode="w+", shape=(initial_size, embedding_size))
+            embeddings[:n_existing] = existing[:]
             embeddings.flush()
-
             return embeddings, initial_size
 
-        # If the temporary file exists, open in r+ mode
-        if Path(embeddings_file).exists():
-            embeddings = np.memmap(
-                embeddings_file,
-                dtype="float32",
-                mode="r+",
-                shape=(
-                    max(
-                        initial_size,
-                        len(self.ensembl_metadata_dict[species][dna_llm][dna_context_len]),
-                    ),
-                    embedding_size,
-                ),
-            )
-        else:
-            # Create new temporary file if neither exists
-            embeddings = np.memmap(
-                embeddings_file,
-                dtype="float32",
-                mode="w+",
-                shape=(initial_size, embedding_size),
-            )
+        # Create new temporary file if neither exists
+        embeddings = np.memmap(
+            embeddings_file,
+            dtype="float32",
+            mode="w+",
+            shape=(initial_size, embedding_size),
+        )
 
         return embeddings, initial_size
+
+    def _load_checkpoint_rows(self, checkpoint_file: Path) -> int | None:
+        """Return committed row count from checkpoint file, or None."""
+        if not checkpoint_file.exists():
+            return None
+        try:
+            return max(0, int(json.loads(checkpoint_file.read_text()).get("committed_rows", 0)))
+        except Exception:
+            return None
+
+    def _write_checkpoint(self, checkpoint_file: Path, committed_rows: int, embedding_size: int) -> None:
+        """Atomically write embeddings checkpoint."""
+        tmp = checkpoint_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps({
+            "committed_rows": committed_rows,
+            "embedding_size": embedding_size,
+            "time": time.time(),
+        }))
+        os.replace(tmp, checkpoint_file)
+
+    def _fsync(self, path: str | Path) -> None:
+        """Best-effort fsync."""
+        try:
+            with open(path, "rb") as f:
+                os.fsync(f.fileno())
+        except OSError:
+            pass
 
     def _process_genomic_locations(
         self,
@@ -463,18 +503,14 @@ class DNALLMEmbedder:
 
         """
         last_save_time = time.time()
-        save_time_interval = 300  # Save progress every 5 minutes
-
-        # Verify embeddings file integrity before starting
-        try:
-            embeddings[0]  # Verify we can read from mmap
-        except Exception as e:
-            self.logger.exception("Failed to access embeddings file")
-            msg = "Embeddings file is corrupted or inaccessible"
-            raise RuntimeError(msg) from e
-
-        # Track processed locations for verification
+        save_time_interval = 300
         processed_locations = {}
+
+        # Verify mmap is accessible
+        try:
+            _ = embeddings[0]
+        except Exception as e:
+            raise RuntimeError("Embeddings file corrupted") from e
 
         try:
             # Filter out already processed embeddings
@@ -484,15 +520,10 @@ class DNALLMEmbedder:
             genomic_locations_to_process = [
                 f for f in genomic_locations if f not in processed_genomic_locations
             ]
-            if processed_genomic_locations:
-                self.logger.info(
-                    f"{len(genomic_locations) - len(genomic_locations_to_process)} "
-                    "genomic locations already processed. Skipping those.",
-                )
-
-            # Return nothing if everything has already been processed
-            if len(genomic_locations_to_process) == 0:
+            if not genomic_locations_to_process:
                 return
+            if processed_genomic_locations:
+                self.logger.info(f"Skipping {len(processed_genomic_locations)} already processed locations.")
 
             # Create dataset
             dataset = GenomicSequenceDataset(genomic_locations_to_process, genome, dna_context_len)
@@ -500,31 +531,31 @@ class DNALLMEmbedder:
             # Create dataloader with partial collate function
             collate_fn = partial(collate_sequences, tokenizer=tokenizer)
 
-            dataloader = DataLoader(
-                dataset,
-                batch_size=batch_size,
-                num_workers=num_workers,
-                shuffle=False,
-                collate_fn=collate_fn,
-                pin_memory=True,
-                prefetch_factor=2,
-                persistent_workers=num_workers > 0,
-            )
+            # pyfaidx.Fasta can't be pickled, so disable multiprocessing on macOS/spawn.
+            start_method = mp.get_start_method(allow_none=True)
+            use_mp = num_workers > 0 and not (sys.platform == "darwin" or start_method == "spawn")
+            effective_num_workers = num_workers if use_mp else 0
+            if not use_mp and num_workers > 0:
+                self.logger.warning("Using num_workers=0 (genome handle not picklable on macOS).")
+
+            dataloader_kwargs: dict = {
+                "dataset": dataset,
+                "batch_size": batch_size,
+                "num_workers": effective_num_workers,
+                "shuffle": False,
+                "collate_fn": collate_fn,
+                "pin_memory": True,
+            }
+            if use_mp:
+                dataloader_kwargs.update({"prefetch_factor": 2, "persistent_workers": True})
+            dataloader = DataLoader(**dataloader_kwargs)
 
             with tqdm(
                 desc="Generating embeddings",
                 total=len(genomic_locations_to_process),
             ) as pbar:
                 for i, batch in enumerate(dataloader):
-                    # Verify input data
-                    if not isinstance(batch["input_ids"], torch.Tensor):
-                        msg = f"Expected tensor input, got {type(batch['input_ids'])}"
-                        self._raise_type_error(msg)
-                    if len(batch["locations"]) != batch["input_ids"].shape[0]:
-                        msg = "Batch size mismatch between locations and inputs"
-                        self._raise_validation_error(msg)
-
-                    # Generate embeddings with error checking
+                    # Generate embeddings
                     try:
                         input_ids = batch["input_ids"].to(model.device, non_blocking=True)
                         attention_mask = batch["attention_mask"].float().to(model.device)
@@ -625,18 +656,18 @@ class DNALLMEmbedder:
                         self.logger.exception(f"Failed to save embeddings for batch {i}")
                         raise
 
-                    # Periodic verification and saving
+                    # Periodic checkpoint
                     if time.time() - last_save_time > save_time_interval:
-                        self._verify_saved_data(
-                            processed_locations,
-                            embeddings,
-                            species,
-                            dna_llm,
-                            dna_context_len,
-                        )
                         embeddings.flush()
+                        self._fsync(embeddings.filename)
+                        self._write_checkpoint(
+                            Path(embeddings.filename).with_suffix(".checkpoint.json"),
+                            len(self.ensembl_metadata_dict[species][dna_llm][dna_context_len]),
+                            expected_dim,
+                        )
                         self._save_ensembl_metadata()
                         last_save_time = time.time()
+                        self._verify_saved_data(processed_locations, embeddings, species, dna_llm, dna_context_len)
 
                     # Update progress bar with batch size
                     pbar.update(len(batch["locations"]))
@@ -650,10 +681,21 @@ class DNALLMEmbedder:
                 dna_context_len,
             )
 
-        except Exception:
-            self.logger.exception("Fatal error during embedding generation")
+        except (KeyboardInterrupt, Exception) as exc:
+            # Checkpoint progress on any exit
+            is_interrupt = isinstance(exc, KeyboardInterrupt)
+            if is_interrupt:
+                self.logger.warning("Interrupted; saving progress.")
+            else:
+                self.logger.exception("Fatal error during embedding generation")
             embeddings.flush()
-            self._save_ensembl_metadata()  # Save what we have
+            self._fsync(embeddings.filename)
+            self._write_checkpoint(
+                Path(embeddings.filename).with_suffix(".checkpoint.json"),
+                len(self.ensembl_metadata_dict[species][dna_llm][dna_context_len]),
+                self.llm_embedding_size_dict[dna_llm],
+            )
+            self._save_ensembl_metadata()
             raise
 
     def _verify_saved_data(
@@ -664,51 +706,14 @@ class DNALLMEmbedder:
         dna_llm: str,
         dna_context_len: int,
     ) -> None:
-        """Verify integrity of saved embeddings and metadata.
-
-        Args:
-            processed_locations (Dict[str, int]): Dictionary mapping locations to indices
-            embeddings (np.memmap): Memory-mapped array of embeddings
-            species (str): Species name
-            dna_llm (str): Name of DNA language model
-            dna_context_len (int): Context length for DNA sequences
-
-        Raises:
-            ValueError: If data verification fails or corruption is detected
-
-        """
-        self.logger.debug("Verifying data integrity...")
-
-        try:
-            # Verify each processed location
-            for loc, idx in processed_locations.items():
-                # Check metadata consistency
-                stored_idx = self.ensembl_metadata_dict[species][dna_llm][dna_context_len].get(loc)
-                if stored_idx != idx:
-                    msg = f"Index mismatch for location {loc}: {stored_idx} != {idx}"
-                    self._raise_validation_error(msg)
-
-                # Verify embedding is accessible and valid
-                try:
-                    embedding = embeddings[idx]
-                    if np.any(np.isnan(embedding)):
-                        msg = f"NaN values detected in embedding for location {loc}"
-                        self._raise_validation_error(msg)
-                    if np.any(np.isinf(embedding)):
-                        msg = f"Infinite values detected in embedding for location {loc}"
-                        self._raise_validation_error(msg)
-                except Exception as e:
-                    msg = (
-                        f"Cannot access or validate embedding for location {loc} "
-                        f"at index {idx}: {e!s}"
-                    )
-                    raise TypeError(msg) from e
-
-            self.logger.debug("Data integrity verification completed successfully")
-
-        except Exception:
-            self.logger.exception("Data integrity verification failed")
-            raise
+        """Verify integrity of saved embeddings and metadata."""
+        meta = self.ensembl_metadata_dict[species][dna_llm][dna_context_len]
+        for loc, idx in processed_locations.items():
+            if meta.get(loc) != idx:
+                raise ValueError(f"Index mismatch for {loc}: {meta.get(loc)} != {idx}")
+            emb = embeddings[idx]
+            if np.any(np.isnan(emb)) or np.any(np.isinf(emb)):
+                raise ValueError(f"Invalid embedding for {loc}")
 
     def _finalize_embeddings(
         self,
@@ -731,42 +736,41 @@ class DNALLMEmbedder:
 
         """
         embeddings.flush()
-        if (
-            len(self.ensembl_metadata_dict[species][dna_llm][dna_context_len])
-            < embeddings.shape[0]
-        ):
-            embeddings_file = Path(embeddings_file)
+        embeddings_path = Path(embeddings_file)
+        final_path = embeddings_path.with_suffix("").with_suffix(".mmap")
+        target_rows = len(self.ensembl_metadata_dict[species][dna_llm][dna_context_len])
+
+        # If the tmp file is larger than needed, truncate by re-mmapping to the target shape.
+        if target_rows < embeddings.shape[0]:
             new_embeddings = np.memmap(
-                embeddings_file,
+                embeddings_path,
                 dtype="float32",
                 mode="r+",
-                shape=(
-                    len(self.ensembl_metadata_dict[species][dna_llm][dna_context_len]),
-                    embeddings.shape[1],
-                ),
+                shape=(target_rows, embeddings.shape[1]),
             )
-            new_embeddings[:] = embeddings[
-                : len(self.ensembl_metadata_dict[species][dna_llm][dna_context_len])
-            ]
+            new_embeddings[:] = embeddings[:target_rows]
             new_embeddings.flush()
-            embeddings_file.rename(embeddings_file.with_suffix("").with_suffix(".mmap"))
+
+        # Always finalize by moving `.mmap.tmp` → `.mmap` so downstream readers can find it.
+        if embeddings_path.exists():
+            os.replace(embeddings_path, final_path)
+        self._fsync(final_path)
 
         self._save_ensembl_metadata()
 
     def _save_ensembl_metadata(self) -> None:
-        """Save the Ensembl metadata dictionary to a SQLite database.
-
-        Saves the metadata dictionary containing species information, genome assemblies,
-        and embedding indices to a persistent SQLite database.
-        """
-        ensembl_metadata_dict_file = Path(self.dependencies_dir) / "ensembl_metadata.db"
-        ensembl_metadata_dict_file_tmp = ensembl_metadata_dict_file.with_suffix(".db.tmp")
-
-        with sqlitedict.SqliteDict(ensembl_metadata_dict_file_tmp, autocommit=True) as db:
-            db.update(self.ensembl_metadata_dict)
-
-        ensembl_metadata_dict_file_tmp.rename(ensembl_metadata_dict_file)
-        self.logger.debug(f"Saved Ensembl metadata dictionary under {ensembl_metadata_dict_file}.")
+        """Save Ensembl metadata to SQLite (atomic write)."""
+        db_file = Path(self.dependencies_dir) / "ensembl_metadata.db"
+        tmp_file = db_file.with_suffix(".db.tmp")
+        db_file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            tmp_file.unlink(missing_ok=True)  # Remove stale tmp from crashed runs
+            with sqlitedict.SqliteDict(tmp_file, autocommit=True, flag="n") as db:
+                db.update(self.ensembl_metadata_dict)
+            os.replace(tmp_file, db_file)
+            self._fsync(db_file)
+        except (OSError, sqlite3.OperationalError) as e:
+            self.logger.warning(f"Failed to save metadata: {e!s}")
 
     def _load_genome(self, species: str) -> str:
         """Load or download the genome file for the specified species.
@@ -1043,9 +1047,19 @@ def collate_sequences(
     sequences = [item["sequence"] for item in batch]
 
     # Standard tokenization for other models
-    tokenized = tokenizer(sequences, padding=True, return_tensors="pt")
+    tokenized = tokenizer(sequences, padding=True, return_tensors="pt", pad_to_multiple_of=128)
     input_ids = tokenized["input_ids"]
-    attention_mask = tokenized["attention_mask"]  # Already provided by the tokenizer
+
+    # Some tokenizers/models (e.g. NTv3) don't return an attention mask
+    if "attention_mask" in tokenized:
+        attention_mask = tokenized["attention_mask"]
+    else:
+        pad_token_id = getattr(tokenizer, "pad_token_id", None)
+        if pad_token_id is not None:
+            attention_mask = (input_ids != pad_token_id).to(dtype=torch.long)
+        else:
+            # No padding info available; assume all tokens are real
+            attention_mask = torch.ones_like(input_ids, dtype=torch.long)
 
     return {
         "locations": locations,

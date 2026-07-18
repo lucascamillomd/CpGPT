@@ -30,8 +30,7 @@ class CpGPT(nn.Module):
 
     This model implements a flexible architecture for DNA methylation prediction,
     supporting both transformer and mamba-based architectures. It can process DNA
-    sequences and their methylation states, with optional condition prediction
-    and noise prediction capabilities for diffusion models.
+    sequences and their methylation states, with optional condition prediction.
 
     Args:
         d_embedding (int): Dimension of the embedding space.
@@ -49,7 +48,6 @@ class CpGPT(nn.Module):
         fft (bool): Whether to use FFT instead of attention.
         use_condition_decoder (bool): Whether to use condition decoder.
         condition_size (int): Size of query for condition decoder.
-        use_noise_decoder (bool): Whether to use noise decoder.
         mlp_block_bias (bool): Whether to use bias in MLP blocks
         mlp_block_norm_type (str): Type of normalization for MLP blocks
         mlp_block_pre_norm (bool): Whether to apply normalization before the input adapter
@@ -73,7 +71,6 @@ class CpGPT(nn.Module):
         meth_decoder (MLPBlock): Methylation prediction decoder.
         meth_unc_decoder (MLPBlock): Methylation uncertainty decoder.
         condition_decoder (Optional[MLPBlock]): Condition prediction decoder if used.
-        noise_decoder (Optional[MLPBlock]): Noise prediction decoder if used.
 
     """
 
@@ -94,7 +91,6 @@ class CpGPT(nn.Module):
         fft: bool,
         use_condition_decoder: bool,
         condition_size: int,
-        use_noise_decoder: bool,
         mlp_block_bias: bool,
         mlp_block_norm_type: str,
         mlp_block_pre_norm: bool,
@@ -103,6 +99,7 @@ class CpGPT(nn.Module):
         transformer_block_norm_type: str,
         transformer_block_norm_first: bool,
         transformer_block_dropout: float,
+        **kwargs: object,
     ) -> None:
         """Initialize the CpGPT model.
 
@@ -122,7 +119,6 @@ class CpGPT(nn.Module):
             fft: Whether to use FFT instead of attention
             use_condition_decoder: Whether to use condition decoder
             condition_size: Size of query for condition decoder
-            use_noise_decoder: Whether to use noise decoder
             mlp_block_bias: Whether to use bias in MLP blocks
             mlp_block_norm_type: Type of normalization for MLP blocks
             mlp_block_pre_norm: Whether to apply normalization before the input adapter
@@ -137,6 +133,14 @@ class CpGPT(nn.Module):
 
         """
         super().__init__()
+
+        # Backwards-compatibility: older configs may include legacy keys that are no longer used.
+        # We intentionally ignore them.
+        if "use_noise_decoder" in kwargs:
+            kwargs.pop("use_noise_decoder")
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs.keys()))
+            raise TypeError(f"Unexpected kwargs for CpGPT: {unexpected}")
 
         # Store initialization parameters
         self.d_embedding = d_embedding
@@ -154,7 +158,6 @@ class CpGPT(nn.Module):
         self.fft = fft
         self.use_condition_decoder = use_condition_decoder
         self.condition_size = condition_size
-        self.use_noise_decoder = use_noise_decoder
         self.mlp_block_bias = mlp_block_bias
         self.mlp_block_norm_type = mlp_block_norm_type
         self.mlp_block_pre_norm = mlp_block_pre_norm
@@ -299,22 +302,6 @@ class CpGPT(nn.Module):
                 ],
             )
             self.condition_decoder = MLPBlock(
-                self.d_embedding,
-                self.d_hidden,
-                self.d_embedding,
-                self.dropout,
-                n_blocks=self.n_mlp_blocks,
-                out_bias=True,
-                activation=self.activation,
-                bias=self.mlp_block_bias,
-                norm_type=self.mlp_block_norm_type,
-                pre_norm=self.mlp_block_pre_norm,
-                post_norm=self.mlp_block_post_norm,
-            )
-
-        # Noise decoder for diffusion
-        if self.use_noise_decoder:
-            self.noise_decoder = MLPBlock(
                 self.d_embedding,
                 self.d_hidden,
                 self.d_embedding,
@@ -542,42 +529,6 @@ class CpGPT(nn.Module):
 
         # Perform batch matrix multiplication
         return torch.bmm(condition_tokens, sample_embedding.unsqueeze(2)).squeeze(2)
-
-    def predict_noise(
-        self,
-        sample_embedding_t: torch.Tensor,
-        t: int | torch.Tensor,
-    ) -> torch.Tensor:
-        """Predict noise component in a diffusion process.
-
-        Args:
-            sample_embedding_t (torch.Tensor): Noisy sample embedding at time t,
-                shape (batch_size, d_embedding).
-            t (Union[int, torch.Tensor]): Timestep(s) in the diffusion process.
-
-        Returns:
-            torch.Tensor: Predicted noise of shape (batch_size, d_embedding).
-
-        """
-        time_embedding = self.get_time_embedding(t)
-        sample_embedding_t = sample_embedding_t + time_embedding
-        return self.noise_decoder(sample_embedding_t)
-
-    def get_time_embedding(self, t: torch.Tensor) -> torch.Tensor:
-        """Generate sinusoidal time embeddings for diffusion timesteps.
-
-        Args:
-            t (torch.Tensor): Timestep tensor of shape (batch_size,).
-
-        Returns:
-            torch.Tensor: Time embeddings of shape (batch_size, d_embedding).
-
-        """
-        half_dim = self.d_embedding // 2
-        emb = torch.log(torch.tensor(10000.0)) / (half_dim - 1)
-        emb = torch.exp(torch.arange(half_dim, device=t.device) * -emb)
-        emb = t.unsqueeze(1) * emb.unsqueeze(0)
-        return torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
 
     def forward(
         self,

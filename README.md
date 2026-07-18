@@ -10,8 +10,9 @@
 [![Lightning 2.5+](https://img.shields.io/badge/lightning-2.5+-792ee5.svg)](https://lightning.ai/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![arXiv](https://img.shields.io/badge/bioRxiv-2024.10.24.619766-b31b1b.svg)](https://www.biorxiv.org/content/10.1101/2024.10.24.619766v1)
+[![HuggingFace](https://img.shields.io/badge/%F0%9F%A4%97_HuggingFace-Models-yellow.svg)](https://huggingface.co/lucascamillomd/cpgpt-models)
 
-[![Typing SVG](https://readme-typing-svg.herokuapp.com?font=Fira+Code&pause=1000&color=2E98FF&center=true&vCenter=true&width=600&lines=A+foundation+model+for+DNA+methylation;Generate%2C+impute%2C+and+embed+methylation+profiles;Fine-tune+for+epigenetics+and+aging+research;CpGCpGCpGCpGCpGCpGCpGCpGCpGCpGCpGCpG)](https://github.com/lcamillo/CpGPT)
+[![Typing SVG](https://readme-typing-svg.herokuapp.com?font=Fira+Code&pause=1000&color=2E98FF&center=true&vCenter=true&width=600&lines=A+foundation+model+for+DNA+methylation;Generate%2C+impute%2C+and+embed+methylation+profiles;Fine-tune+for+epigenetics+and+aging+research;CpGCpGCpGCpGCpGCpGCpGCpGCpGCpGCpGCpG)](https://github.com/lucascamillomd/CpGPT)
 
 </div>
 
@@ -28,10 +29,6 @@
 - [☎️ Contact](#-contact)
 - [📜 License](#-license)
 
-## NEW: The first bio foundation model with chain-of-thought inference 🧠⚙️🧠⚙️🧠
-
-Given CpGPT's generative capabilities, we have implemented an analogous version of the chain-of-thought used in NLP tasks but for the reconstruction of methylation patterns. For more information about the method, please check out our [preprint](https://www.biorxiv.org/content/10.1101/2024.10.24.619766v1). To try it out yourself, please go to the [quick setup tutorial](https://github.com/lcamillo/CpGPT/blob/main/tutorials/quick_setup.ipynb).
-
 ## 📖 Overview
 
 CpGPT is a foundation model for DNA methylation, trained on genome-wide DNA methylation data. It can generate, impute, and embed methylation profiles, and can be finetuned for various downstream tasks.
@@ -40,25 +37,27 @@ CpGPT is a foundation model for DNA methylation, trained on genome-wide DNA meth
 
 ### Prerequisites
 
-- Python 3.10+
-- [Poetry](https://python-poetry.org/docs/#installation)
-- AWS CLI (for downloading dependencies)
+- Python 3.10–3.12
+- [uv](https://docs.astral.sh/uv/)
+- HuggingFace CLI (recommended, no Amazon AWS account required) or AWS CLI (for downloading model weights and dependencies)
 
 ### Installation Instructions
 
-We recommend using `poetry` for installation:
+We recommend using `uv` for installation:
 
 ```bash
 # Clone the repository
-git clone https://github.com/lcamillo/CpGPT.git
+git clone https://github.com/lucascamillomd/CpGPT.git
 cd CpGPT
 
-# Install poetry if not available
-pip install poetry
+# Install uv if not available
+pip install uv
 
-# Install dependencies with Poetry
-poetry install
+# Create/sync the environment (incl. dev deps)
+uv sync --all-groups
 ```
+
+**Note (dev environment)**: the repo includes a `.python-version` file; `uv sync` will use Python 3.12 by default for better compatibility with native-extension dependencies.
 
 Alternatively, the package is available through:
 
@@ -67,9 +66,38 @@ Alternatively, the package is available through:
 pip install CpGPT
 ```
 
-### Setting up AWS CLI for Dependencies
+### Downloading Model Weights & Dependencies
 
-Our pre-trained models and data are stored in AWS S3. If you do not already have an AWS account setup, follow these steps:
+Model weights and pre-computed dependencies are publicly hosted on **HuggingFace** (recommended — no Amazon AWS account required) and mirrored on AWS S3. The HuggingFace route grabs the pre-trained checkpoints (`cpgpt-models`), human DNA embeddings (`cpgpt-human-dependencies`), and mammalian DNA embeddings (`cpgpt-mammalian-dependencies`) through the standard `huggingface-cli` — no AWS sign-up, credit card, or `--request-payer` flag needed.
+
+<details open>
+<summary><b>Option A: HuggingFace (Recommended)</b></summary>
+
+```bash
+pip install huggingface_hub
+
+# Download model weights (required)
+huggingface-cli download lucascamillomd/cpgpt-models --local-dir dependencies/model
+
+# Download human dependencies (required for human methylation arrays)
+huggingface-cli download lucascamillomd/cpgpt-human-dependencies --local-dir dependencies/human
+
+# Download mammalian dependencies (required for cross-species analyses, ~37 GB)
+huggingface-cli download lucascamillomd/cpgpt-mammalian-dependencies --local-dir dependencies/mammalian
+```
+
+You can also download a single model instead of all of them:
+
+```bash
+huggingface-cli download lucascamillomd/cpgpt-models weights/small.ckpt config/small.yaml vocab/small.json --local-dir dependencies/model
+```
+
+</details>
+
+<details closed>
+<summary><b>Option B: AWS S3</b></summary>
+
+Our pre-trained models and data are also stored in AWS S3. If you do not already have an AWS account setup, follow these steps:
 
 <details closed>
 <summary><b>1. Create an AWS Account</b></summary>
@@ -148,6 +176,8 @@ aws s3 ls s3://cpgpt-lucascamillo-public/data/cpgcorpus/raw/ --request-payer req
 ```
 
 You should see a list of GSE folders if your configuration is correct.
+
+</details>
 
 </details>
 

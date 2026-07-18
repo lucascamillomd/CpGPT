@@ -366,8 +366,6 @@ class CpGPTMortalityLitModule(CpGPTLitModule):
                 - sample_embedding_full (torch.Tensor): Sample embeddings with full data
                 - obsm (torch.Tensor): Observation matrix
                 - pred_conditions (torch.Tensor): Predicted conditions
-                - noise (torch.Tensor): Input noise for diffusion
-                - pred_noise (torch.Tensor): Predicted noise
                 - loss_mask (torch.Tensor): Mask for loss calculation
 
         Returns:

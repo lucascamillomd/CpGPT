@@ -14,7 +14,6 @@ use_power_norm: false
 fft: false
 use_condition_decoder: false
 condition_size: 0
-use_noise_decoder: false
 mlp_block_bias: false
 mlp_block_norm_type: rmsnorm
 mlp_block_pre_norm: false

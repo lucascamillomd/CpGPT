@@ -1,10 +1,7 @@
 generative_splits: 2
 binarize_input: true
 contrastive_threshold: 0.5
-diffusion: false
 reconstruct_mode: all
-diffusion_params:
-  num_timesteps: 1000
 loss_weights:
   m_mae: 10.0
   m_mae_unc: 1.0
@@ -14,5 +11,4 @@ loss_weights:
   betas_wd: 1.0
   contrastive: 1.0
   sample_kld: 1.0
-  diffusion_mse: 0.0
   condition_loss: 0.0

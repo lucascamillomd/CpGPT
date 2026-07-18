@@ -13,7 +13,6 @@ from .cpgpt_module_mortality import CpGPTMortalityLitModule
 from .utils import (
     SaveOutput,
     beta_to_m,
-    cosine_beta_schedule,
     m_to_beta,
     patch_attention,
 )
@@ -30,7 +29,6 @@ __all__ = [
     "SwiGLU",
     "TransformerPPBlock",
     "beta_to_m",
-    "cosine_beta_schedule",
     "create_hic_attention_mask",
     "m_to_beta",
     "patch_attention",

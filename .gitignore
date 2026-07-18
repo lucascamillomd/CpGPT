@@ -218,6 +218,9 @@ pyaging_data/
 *.pkl
 
 # Public ignores
+/revision/
+CLAUDE.md
+AGENTS.md
 /analysis/
 /scripts/
 /tests/

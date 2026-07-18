@@ -20,7 +20,6 @@ from cpgpt.loss.loss import (
 from .utils import (
     SaveOutput,
     beta_to_m,
-    cosine_beta_schedule,
     m_to_beta,
     patch_attention,
     safe_clone,
@@ -31,7 +30,7 @@ class CpGPTLitModule(LightningModule):
     """A LightningModule for CpG site prediction using deep learning.
 
     This module implements a deep learning model for predicting CpG methylation sites,
-    supporting various training configurations including diffusion models and condition prediction.
+    supporting various training configurations including condition prediction.
 
     Args:
         net (torch.nn.Module): Neural network model for CpG prediction.
@@ -70,8 +69,7 @@ class CpGPTLitModule(LightningModule):
 
         Note:
             The module initializes various metrics for tracking training progress and
-            sets up diffusion-related buffers if diffusion training is enabled in
-            the training configuration.
+            supports different training-time behaviors based on the training configuration.
 
         """
         super().__init__()
@@ -94,18 +92,7 @@ class CpGPTLitModule(LightningModule):
         # for random number generation
         self.rng = np.random.default_rng(seed)
 
-        # Register betas, alphas, and alphas_cumprod if diffusion is used
-        if self.hparams.training["diffusion"]:
-            self.register_buffer(
-                "betas",
-                cosine_beta_schedule(self.hparams.training["diffusion_params"]["num_timesteps"]),
-            )
-            self.register_buffer("alphas", 1.0 - self.betas)
-            self.register_buffer("alphas_cumprod", torch.cumprod(self.alphas, dim=0))
-            self.register_buffer(
-                "alphas_cumprod_prev",
-                F.pad(self.alphas_cumprod[:-1], (1, 0), value=1.0),
-            )
+        # Diffusion training is intentionally not supported.
 
     def setup(self, stage: str) -> None:
         """Set up the model for a specific stage of training.
@@ -617,11 +604,11 @@ class CpGPTLitModule(LightningModule):
         # Step 4: Forward Pass
         full_sequence_embeddings = self.net.encode_sequence(batch["dna_embeddings"])
         output_dictionary = {
-            "meth": input_data["meth"],
-            "mask_na": input_data["mask_na"],
+            "meth": meth,
+            "mask_na": mask_na,
             "current_input_masks": current_input_masks,
-            "chroms": input_data["chroms"],
-            "positions": input_data["positions"],
+            "chroms": batch["chroms"],
+            "positions": batch["positions"],
         }
         return self._forward_pass(
             batch,
@@ -853,20 +840,6 @@ class CpGPTLitModule(LightningModule):
         # Encode sample
         sample_embedding = self.net.encode_sample(**input_data)
 
-        # Add diffusion components if enabled
-        if self.hparams.training.get("diffusion", False) and self.net.use_noise_decoder:
-            t = torch.randint(
-                0,
-                self.hparams.training["diffusion_params"]["num_timesteps"],
-                (sample_embedding.size(0),),
-                device=sample_embedding.device,
-            ).long()
-            noise = torch.randn_like(sample_embedding)
-            sample_embedding_t = self.q_sample(sample_embedding, t, noise)
-            pred_noise = self.net.predict_noise(sample_embedding_t, t)
-            loss_inputs.update({"noise": noise, "pred_noise": pred_noise})
-            sample_embedding = sample_embedding_t
-
         loss_inputs["sample_embedding"] = sample_embedding
 
         # Add methylation predictions
@@ -970,6 +943,8 @@ class CpGPTLitModule(LightningModule):
 
             # Step 3.5: Expand across batch dimension if needed
             if full_sequence_embeddings.dim() == 2:
+                full_sequence_embeddings = full_sequence_embeddings.unsqueeze(0).expand(meth.size(0), -1, -1)
+            elif full_sequence_embeddings.size(0) == 1 and meth.size(0) > 1:
                 full_sequence_embeddings = full_sequence_embeddings.expand(meth.size(0), -1, -1)
 
             # Step 3.6: Forward pass with your net, capturing predictions & uncertainties
@@ -1197,8 +1172,6 @@ class CpGPTLitModule(LightningModule):
                 - sample_embedding_full (torch.Tensor): Sample embeddings with full data
                 - obsm (torch.Tensor): Observation matrix
                 - pred_conditions (torch.Tensor): Predicted conditions
-                - noise (torch.Tensor): Input noise for diffusion
-                - pred_noise (torch.Tensor): Predicted noise
                 - loss_mask (torch.Tensor): Mask for loss calculation
 
         Returns:
@@ -1261,12 +1234,6 @@ class CpGPTLitModule(LightningModule):
                 sample_embedding,
                 sample_embedding_full,
             )
-
-        # Calculate diffusion losses if available
-        noise = kwargs.get("noise")
-        pred_noise = kwargs.get("pred_noise")
-        if noise is not None and pred_noise is not None:
-            losses["diffusion_mse"] = F.mse_loss(noise, pred_noise).mean()
 
         # Calculate condition losses if available
         pred_conditions = kwargs.get("pred_conditions")
@@ -1352,125 +1319,6 @@ class CpGPTLitModule(LightningModule):
             prog_bar=True,
             logger=False,
         )
-
-    def q_sample(
-        self,
-        x_start: torch.Tensor,
-        t: torch.Tensor,
-        noise: torch.Tensor,
-    ) -> torch.Tensor:
-        """Add noise to data according to the forward diffusion process.
-
-        Args:
-            x_start (torch.Tensor): Initial clean data.
-            t (torch.Tensor): Timesteps at which to add noise.
-            noise (torch.Tensor): Noise to be added.
-
-        Returns:
-            torch.Tensor: Noisy data at specified timesteps.
-
-        """
-        sqrt_alphas_cumprod = self.alphas_cumprod.sqrt()[t].unsqueeze(-1)
-        sqrt_one_minus_alphas_cumprod = (1 - self.alphas_cumprod).sqrt()[t].unsqueeze(-1)
-        return sqrt_alphas_cumprod * x_start + sqrt_one_minus_alphas_cumprod * noise
-
-    def p_sample(
-        self,
-        x_t: torch.Tensor,
-        t: torch.Tensor,
-        predicted_noise: torch.Tensor,
-    ) -> torch.Tensor:
-        """Sample from the reverse diffusion process.
-
-        Args:
-            x_t (torch.Tensor): Current noisy sample.
-            t (torch.Tensor): Current timestep.
-            predicted_noise (torch.Tensor): Predicted noise at current timestep.
-
-        Returns:
-            torch.Tensor: Sample at previous timestep (t-1).
-
-        """
-        betas_t = self.betas[t].unsqueeze(-1)  # Beta at timestep t
-        sqrt_one_minus_alphas_cumprod_t = torch.sqrt(1 - self.alphas_cumprod[t]).unsqueeze(-1)
-        sqrt_recip_alphas_t = torch.sqrt(1.0 / self.alphas[t]).unsqueeze(-1)
-
-        # Estimate x_0
-        x_0_pred = sqrt_recip_alphas_t * (
-            x_t - betas_t * predicted_noise / sqrt_one_minus_alphas_cumprod_t
-        )
-
-        # Compute coefficients for the model mean
-        posterior_mean_coef1 = (
-            self.betas[t].unsqueeze(-1)
-            * torch.sqrt(self.alphas_cumprod_prev[t]).unsqueeze(-1)
-            / (1.0 - self.alphas_cumprod[t]).unsqueeze(-1)
-        )
-        posterior_mean_coef2 = (
-            (1.0 - self.alphas_cumprod_prev[t]).unsqueeze(-1)
-            * torch.sqrt(self.alphas[t]).unsqueeze(-1)
-            / (1.0 - self.alphas_cumprod[t]).unsqueeze(-1)
-        )
-
-        # Compute the model mean (posterior mean)
-        model_mean = posterior_mean_coef1 * x_0_pred + posterior_mean_coef2 * x_t
-
-        # Compute the posterior variance
-        posterior_variance = (
-            self.betas[t].unsqueeze(-1)
-            * (1.0 - self.alphas_cumprod_prev[t]).unsqueeze(-1)
-            / (1.0 - self.alphas_cumprod[t]).unsqueeze(-1)
-        )
-
-        # Ensure variance is non-negative
-        posterior_variance = torch.clamp(posterior_variance, min=1e-10)
-
-        # Sample from the normal distribution with computed mean and variance
-        noise = torch.randn_like(x_t) if t[0] > 0 else torch.zeros_like(x_t)  # No noise at t = 0
-
-        # Sample x_{t-1}
-        return model_mean + torch.sqrt(posterior_variance) * noise
-
-    def ddim_sample(
-        self,
-        x_t: torch.Tensor,
-        t: torch.Tensor,
-        pred_noise: torch.Tensor,
-        eta: float = 0.0,
-    ) -> torch.Tensor:
-        """Perform a DDIM sampling step.
-
-        Implements the Denoising Diffusion Implicit Models sampling algorithm.
-
-        Args:
-            x_t (torch.Tensor): Current noisy sample.
-            t (torch.Tensor): Current timestep.
-            pred_noise (torch.Tensor): Predicted noise at current timestep.
-            eta (float, optional): Stochasticity parameter. Defaults to 0.0.
-
-        Returns:
-            torch.Tensor: Sample at previous timestep.
-
-        """
-        alpha_t = self.alphas_cumprod[t]
-        alpha_prev = self.alphas_cumprod[t - 1] if t[0] > 0 else torch.ones_like(alpha_t)
-
-        sigma = (
-            eta
-            * torch.sqrt((1 - alpha_prev) / (1 - alpha_t))
-            * torch.sqrt(1 - alpha_t / alpha_prev)
-        )
-
-        # Predict x0
-        pred_x0 = (x_t - torch.sqrt(1 - alpha_t) * pred_noise) / torch.sqrt(alpha_t)
-
-        # Get the mean for q(x_{t-1} | x_t, x_0)
-        dir_xt = torch.sqrt(1 - alpha_prev - sigma**2) * pred_noise
-        mean = torch.sqrt(alpha_prev) * pred_x0 + dir_xt
-
-        noise = torch.randn_like(x_t) if t[0] > 0 else 0
-        return mean + sigma * noise
-
 
 if __name__ == "__main__":
     _ = CpGPTLitModule(None, None, None)
