@@ -1,11 +1,11 @@
 from pathlib import Path
 
 import boto3
-import botocore
 import hydra
 import torch
 from omegaconf import OmegaConf
 
+from cpgpt.downloads import DownloadedCpGPTResources, download_cpgpt, resolve_cached_model
 from cpgpt.log.utils import get_class_logger
 from cpgpt.model.cpgpt_module import CpGPTLitModule
 
@@ -22,8 +22,8 @@ class CpGPTInferencer:
         device: The device (CPU or CUDA) to be used for computations.
         dependencies_dir: Directory for model dependencies.
         data_dir: Directory for datasets.
-        available_models: List of available model names.
-        available_datasets: List of available GSE datasets.
+        available_models: Empty compatibility list; model discovery is not implicit.
+        available_datasets: List of available CpGCorpus GSE datasets discovered via S3.
 
     """
 
@@ -50,26 +50,13 @@ class CpGPTInferencer:
         if self.device == "cpu":
             self.logger.warning("Using CPU for inference. This may be slow.")
 
-        # Initialize S3 client
+        # Initialize S3 only for optional CpGCorpus dataset discovery and downloads.
         try:
             self.s3_client = boto3.client("s3")
             self.s3_resource = boto3.resource("s3")
             self.bucket_name = "cpgpt-lucascamillo-public"
 
-            # Get available models
-            self._get_available_models()
-            if self.available_models:
-                examples = (
-                    self.available_models[:3]
-                    if len(self.available_models) > 3
-                    else self.available_models
-                )
-                self.logger.info(
-                    f"There are {len(self.available_models)} CpGPT models available "
-                    f"such as {', '.join(examples)}, etc."
-                )
-
-            # Get available datasets
+            # Get available CpGCorpus datasets.
             self._get_available_datasets()
             if self.available_datasets:
                 examples = (
@@ -83,29 +70,12 @@ class CpGPTInferencer:
                 )
 
         except Exception as e:
-            self.logger.warning(f"Failed to initialize S3 client: {e}")
+            self.logger.warning(f"Failed to initialize CpGCorpus S3 client: {e}")
             self.s3_client = None
             self.s3_resource = None
 
-    def _get_available_models(self) -> None:
-        """Query S3 to get a list of all available models."""
-        try:
-            response = self.s3_client.list_objects_v2(
-                Bucket=self.bucket_name,
-                Prefix="dependencies/model/weights/",
-                RequestPayer="requester",
-            )
-
-            for obj in response.get("Contents", []):
-                key = obj["Key"]
-                if key.endswith(".ckpt"):
-                    model_name = key.split("/")[-1].replace(".ckpt", "")
-                    self.available_models.append(model_name)
-        except Exception as e:
-            self.logger.warning(f"Failed to get available models: {e}")
-
     def _get_available_datasets(self) -> None:
-        """Query S3 to get a list of all available GSE datasets."""
+        """Query S3 to get a list of available CpGCorpus GSE datasets."""
         try:
             # Initialize pagination parameters
             continuation_token = None
@@ -161,269 +131,64 @@ class CpGPTInferencer:
         self,
         model_name: str = "small",
         overwrite: bool = False,
-        dependencies_dir: str | None = None,
-    ) -> None:
-        """Download a CpGPT model from the S3 bucket.
+        dependencies_dir: str | Path | None = None,
+    ) -> DownloadedCpGPTResources:
+        """Download a CpGPT model from Hugging Face.
 
         Args:
             model_name: Name of the model to download.
-            overwrite: Whether to overwrite existing files.
+            overwrite: Whether to force downloading files again.
             dependencies_dir: Custom dependencies directory. If None, uses the instance's
                 dependencies_dir.
 
         Returns:
-            bool: True if download was successful, False otherwise.
-
-        Raises:
-            FileNotFoundError: If the model checkpoint is not available.
-            ConnectionError: If boto3 is not properly configured.
+            DownloadedCpGPTResources: Paths to the downloaded model resources.
 
         """
-        if self.s3_client is None:
-            self.logger.error(
-                "S3 client is not initialized. Make sure boto3 is installed and AWS "
-                "credentials are configured."
-            )
-            msg = "S3 client is not initialized"
-            raise ConnectionError(msg)
-
-        # Use custom directory if provided, otherwise use instance's directory
         target_dir = dependencies_dir if dependencies_dir is not None else self.dependencies_dir
         if dependencies_dir is not None:
             self.logger.warning(
                 f"Using custom dependencies directory: {dependencies_dir} (overrides default)"
             )
 
-        # Create directories if they don't exist
-        weights_dir = Path(f"{target_dir}/model/weights")
-        config_dir = Path(f"{target_dir}/model/config")
-        vocab_dir = Path(f"{target_dir}/model/vocab")
-
-        weights_dir.mkdir(parents=True, exist_ok=True)
-        config_dir.mkdir(parents=True, exist_ok=True)
-        vocab_dir.mkdir(parents=True, exist_ok=True)
-
-        # Define paths
-        s3_model_key = f"dependencies/model/weights/{model_name}.ckpt"
-        s3_config_key = f"dependencies/model/config/{model_name}.yaml"
-        s3_vocab_key = f"dependencies/model/vocab/{model_name}.json"
-
-        local_model_path = f"{target_dir}/model/weights/{model_name}.ckpt"
-        local_config_path = f"{target_dir}/model/config/{model_name}.yaml"
-        local_vocab_path = f"{target_dir}/model/vocab/{model_name}.json"
-
-        # Check if the model exists in S3
-        try:
-            self.s3_client.head_object(
-                Bucket=self.bucket_name, Key=s3_model_key, RequestPayer="requester"
-            )
-        except botocore.exceptions.ClientError as e:
-            if e.response["Error"]["Code"] == "404":
-                # Use already fetched available models if possible
-                if not self.available_models:
-                    self._get_available_models()
-
-                error_msg = (
-                    f"Model '{model_name}' does not have a checkpoint available. "
-                    f"Available options: {', '.join(self.available_models)}."
-                )
-                self.logger.exception(error_msg)
-                raise FileNotFoundError(error_msg)
-            self.logger.exception(f"Error checking model existence: {e}")
-            raise
-
-        # Download model checkpoint if it doesn't exist or overwrite is True
-        if not Path(local_model_path).exists() or overwrite:
-            self.logger.info(f"Downloading model checkpoint to {local_model_path}.")
-            try:
-                self.s3_client.download_file(
-                    self.bucket_name,
-                    s3_model_key,
-                    local_model_path,
-                    ExtraArgs={"RequestPayer": "requester"},
-                )
-            except Exception as e:
-                self.logger.exception(f"Failed to download model checkpoint: {e}")
-                raise
-        else:
-            self.logger.info(
-                f"Model checkpoint already exists at {local_model_path} (skipping download)."
-            )
-
-        # Download model config if it doesn't exist or overwrite is True
-        if not Path(local_config_path).exists() or overwrite:
-            self.logger.info(f"Downloading model config to {local_config_path}")
-            try:
-                self.s3_client.download_file(
-                    self.bucket_name,
-                    s3_config_key,
-                    local_config_path,
-                    ExtraArgs={"RequestPayer": "requester"},
-                )
-            except Exception as e:
-                self.logger.exception(f"Failed to download model config: {e}")
-                raise
-        else:
-            self.logger.info(
-                f"Model config already exists at {local_config_path} (skipping download)."
-            )
-
-        # Check if vocab file exists and download it if needed
-        try:
-            self.s3_client.head_object(
-                Bucket=self.bucket_name, Key=s3_vocab_key, RequestPayer="requester"
-            )
-            if not Path(local_vocab_path).exists() or overwrite:
-                self.logger.info(f"Downloading model vocabulary to {local_vocab_path}")
-                self.s3_client.download_file(
-                    self.bucket_name,
-                    s3_vocab_key,
-                    local_vocab_path,
-                    ExtraArgs={"RequestPayer": "requester"},
-                )
-            else:
-                self.logger.info(
-                    f"Model vocabulary already exists at {local_vocab_path} (skipping download)."
-                )
-        except botocore.exceptions.ClientError as e:
-            if e.response["Error"]["Code"] == "404":
-                self.logger.warning(f"No vocabulary file found for model '{model_name}'.")
-            else:
-                self.logger.exception(f"Error checking vocabulary file: {e}")
-
-        self.logger.info(f"Successfully downloaded model '{model_name}'.")
+        return download_cpgpt(
+            model=model_name,
+            local_dir=target_dir,
+            force_download=overwrite,
+        )
 
     def download_dependencies(
-        self, species: str = "human", overwrite: bool = False, dependencies_dir: str | None = None
-    ) -> None:
-        """Download dependencies for a specific species.
+        self,
+        species: str = "human",
+        overwrite: bool = False,
+        dependencies_dir: str | Path | None = None,
+    ) -> DownloadedCpGPTResources:
+        """Download CpGPT dependencies for a species from Hugging Face.
 
         Args:
             species: Species to download dependencies for. Options: "human" or "mammalian".
-            overwrite: Whether to overwrite existing files.
+            overwrite: Whether to force downloading files again.
             dependencies_dir: Custom dependencies directory. If None, uses the instance's
                 dependencies_dir.
 
         Returns:
-            bool: True if download was successful, False otherwise.
+            DownloadedCpGPTResources: Paths to the downloaded dependency resources.
 
         Raises:
-            ValueError: If the species is not supported.
-            ConnectionError: If boto3 is not properly configured.
+            ValueError: If the species is unsupported.
 
         """
-        if self.s3_client is None:
-            self.logger.error(
-                "S3 client is not initialized. Make sure boto3 is installed and "
-                "AWS credentials are configured."
-            )
-            msg = "S3 client is not initialized"
-            raise ConnectionError(msg)
-
-        # Use custom directory if provided, otherwise use instance's directory
-        target_dir_base = (
-            dependencies_dir if dependencies_dir is not None else self.dependencies_dir
-        )
+        target_dir = dependencies_dir if dependencies_dir is not None else self.dependencies_dir
         if dependencies_dir is not None:
             self.logger.warning(
                 f"Using custom dependencies directory: {dependencies_dir} (overrides default)"
             )
 
-        if species not in ["human", "mammalian"]:
-            error_msg = (
-                f"Species '{species}' is not supported. Available options: 'human', 'mammalian'"
-            )
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        # Create directory if it doesn't exist
-        target_dir = Path(f"{target_dir_base}/{species}")
-        target_dir.mkdir(parents=True, exist_ok=True)
-
-        # Download the dependencies
-        s3_prefix = f"dependencies/{species}/"
-        local_path = f"{target_dir_base}/{species}"
-
-        # Get list of all files that should be downloaded from S3
-        expected_files = []
-        missing_files = []
-
-        try:
-            # List all objects in S3 to get expected files
-            paginator = self.s3_client.get_paginator("list_objects_v2")
-            pages = paginator.paginate(
-                Bucket=self.bucket_name, Prefix=s3_prefix, RequestPayer="requester"
-            )
-
-            for page in pages:
-                for obj in page.get("Contents", []):
-                    key = obj["Key"]
-                    relative_path = key[len(s3_prefix) :]
-                    if not relative_path:  # Skip directory markers
-                        continue
-                    expected_files.append(relative_path)
-
-                    # Check if local file exists
-                    local_file_path = Path(f"{local_path}/{relative_path}")
-                    if not local_file_path.exists():
-                        missing_files.append(relative_path)
-        except Exception as e:
-            self.logger.exception(f"Failed to list S3 objects: {e}")
-            raise
-
-        # Check if we should skip download or proceed
-        if not overwrite and expected_files:
-            if not missing_files:
-                self.logger.info(
-                    f"All {len(expected_files)} dependency files for {species} already exist "
-                    f"at {target_dir}. Skipping download."
-                )
-                return
-            else:
-                self.logger.warning(
-                    f"Dependencies directory exists but {len(missing_files)} out of "
-                    f"{len(expected_files)} files are missing. Proceeding with download."
-                )
-
-        self.logger.info(f"Downloading {species} dependencies to {local_path}.")
-
-        try:
-            # Download all files
-            paginator = self.s3_client.get_paginator("list_objects_v2")
-            pages = paginator.paginate(
-                Bucket=self.bucket_name, Prefix=s3_prefix, RequestPayer="requester"
-            )
-
-            files_downloaded = 0
-            for page in pages:
-                for obj in page.get("Contents", []):
-                    # Get the relative path
-                    key = obj["Key"]
-                    relative_path = key[len(s3_prefix) :]
-                    if not relative_path:  # Skip directory markers
-                        continue
-
-                    # Create local directories if needed
-                    local_file_path = Path(f"{local_path}/{relative_path}")
-                    local_file_path.parent.mkdir(parents=True, exist_ok=True)
-
-                    # Download file if it doesn't exist or overwrite is True
-                    if not local_file_path.exists() or overwrite:
-                        self.s3_client.download_file(
-                            self.bucket_name,
-                            key,
-                            str(local_file_path),
-                            ExtraArgs={"RequestPayer": "requester"},
-                        )
-                        files_downloaded += 1
-
-            self.logger.info(f"Downloaded {files_downloaded} files for {species} dependencies.")
-        except Exception as e:
-            self.logger.exception(f"Failed to download dependencies: {e}")
-            raise
-
-        self.logger.info(f"Successfully downloaded {species} dependencies.")
-        return
+        return download_cpgpt(
+            species=species,
+            local_dir=target_dir,
+            force_download=overwrite,
+        )
 
     def download_cpgcorpus_dataset(
         self, gse_id: str, overwrite: bool = False, data_dir: str | None = None
@@ -568,17 +333,46 @@ class CpGPTInferencer:
 
     def load_cpgpt_config(
         self,
-        config_path: str,
+        config_path: str | Path | None = None,
+        *,
+        model_name: str | None = None,
+        cache_dir: str | Path | None = None,
+        revision: str | None = None,
     ) -> OmegaConf:
-        """Load a yaml file containing the configuration for a CpGPT model.
+        """Load a CpGPT YAML configuration from a path or cached named model.
 
         Args:
-            config_path (str): Path to the yaml configuration file.
+            config_path: Explicit path to the YAML configuration file.
+            model_name: Named model to resolve from the local Hugging Face cache when
+                ``config_path`` is not provided.
+            cache_dir: Optional Hugging Face cache root.
+            revision: Optional Hugging Face repository revision.
 
         Returns:
             OmegaConf: An omega dictionary with the model configuration.
 
         """
+        if config_path is None:
+            if model_name is None:
+                raise ValueError("Provide config_path or model_name.")
+            config_path = resolve_cached_model(
+                model_name,
+                cache_dir=cache_dir,
+                revision=revision,
+            ).config_path
+
+        config_path = Path(config_path)
+        if not config_path.exists():
+            requested = model_name or config_path.stem
+            msg = (
+                f"Config file not found: {config_path}\n"
+                "Download it first with Python:\n"
+                "  from cpgpt import download_cpgpt\n"
+                f"  resources = download_cpgpt(model='{requested}')"
+            )
+            self.logger.error(msg)
+            raise FileNotFoundError(msg)
+
         config = OmegaConf.load(config_path)
         self.logger.info("Loaded CpGPT model config.")
 
@@ -587,8 +381,12 @@ class CpGPTInferencer:
     def load_cpgpt_model(
         self,
         config: OmegaConf,
-        model_ckpt_path: str | None = None,
+        model_ckpt_path: str | Path | None = None,
         strict_load: bool = True,
+        *,
+        model_name: str | None = None,
+        cache_dir: str | Path | None = None,
+        revision: str | None = None,
     ) -> CpGPTLitModule:
         """Load a CpGPT model from a checkpoint file and return the model.
 
@@ -597,10 +395,14 @@ class CpGPTInferencer:
 
         Args:
             config (OmegaConf): Hydra config containing the model definition.
-            model_ckpt_path (str, optional): Path to the checkpoint file. If not provided,
-                random initialization is used.
+            model_ckpt_path: Explicit path to the checkpoint file.
             strict_load (bool, optional): If True, requires exact key matching
                 when loading the checkpoint.
+            model_name: Named model to resolve from the local Hugging Face cache when
+                ``model_ckpt_path`` is not provided. If neither path nor name is
+                provided, random initialization is used.
+            cache_dir: Optional Hugging Face cache root.
+            revision: Optional Hugging Face repository revision.
 
         Returns:
             CpGPTLitModule: The instantiated (and optionally checkpoint-loaded) model.
@@ -614,11 +416,24 @@ class CpGPTInferencer:
         model.to(self.device)
         self.logger.info(f"Using device: {self.device}.")
 
+        if model_ckpt_path is None and model_name is not None:
+            model_ckpt_path = resolve_cached_model(
+                model_name,
+                cache_dir=cache_dir,
+                revision=revision,
+            ).checkpoint_path
+
         # Load checkpoint if a valid path is provided
         if model_ckpt_path is not None:
             ckpt_path_obj = Path(model_ckpt_path)
             if not ckpt_path_obj.exists():
-                msg = f"Checkpoint file not found: {model_ckpt_path}"
+                requested = model_name or ckpt_path_obj.stem
+                msg = (
+                    f"Checkpoint file not found: {model_ckpt_path}\n"
+                    "Download it first with Python:\n"
+                    "  from cpgpt import download_cpgpt\n"
+                    f"  resources = download_cpgpt(model='{requested}')"
+                )
                 self.logger.error(msg)
                 raise FileNotFoundError(msg)
 

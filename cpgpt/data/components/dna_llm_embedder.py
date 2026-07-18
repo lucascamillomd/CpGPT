@@ -27,6 +27,7 @@ from transformers import (
 )
 from transformers.models.bert.configuration_bert import BertConfig
 
+from cpgpt.downloads import resolve_cached_dependencies
 from cpgpt.log.utils import DownloadProgressBar, get_class_logger
 
 
@@ -47,21 +48,38 @@ class DNALLMEmbedder:
 
     """
 
-    def __init__(self, dependencies_dir: str) -> None:
+    def __init__(
+        self,
+        dependencies_dir: str | Path | None = None,
+        *,
+        species: str = "human",
+        cache_dir: str | Path | None = None,
+        revision: str | None = None,
+    ) -> None:
         """Initialize the DNALLMEmbedder.
 
         Args:
-            dependencies_dir (str): Directory for storing dependencies and embeddings.
+            dependencies_dir: Explicit directory containing dependencies and embeddings.
+                When omitted, dependencies are resolved from the local Hugging Face cache.
+            species: Dependency collection to resolve when no explicit directory is given.
+            cache_dir: Optional Hugging Face cache root.
+            revision: Optional Hugging Face repository revision.
 
         Raises:
-            ValueError: If dependencies_dir is not a string.
+            TypeError: If dependencies_dir is not a string or Path.
 
         """
-        if not isinstance(dependencies_dir, str):
-            msg = f"dependencies_dir must be a string, got {type(dependencies_dir)}"
+        if dependencies_dir is None:
+            dependencies_dir = resolve_cached_dependencies(
+                species,
+                cache_dir=cache_dir,
+                revision=revision,
+            )
+        if not isinstance(dependencies_dir, (str, Path)):
+            msg = f"dependencies_dir must be a string or Path, got {type(dependencies_dir)}"
             raise TypeError(msg)
 
-        self.dependencies_dir = dependencies_dir
+        self.dependencies_dir = str(dependencies_dir)
         self.genome_dir = Path(self.dependencies_dir) / "genomes"
         self.dna_embeddings_dir = Path(self.dependencies_dir) / "dna_embeddings"
         self.ensembl_metadata_dict: dict = {}

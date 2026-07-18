@@ -39,7 +39,7 @@ CpGPT is a foundation model for DNA methylation, trained on genome-wide DNA meth
 
 - Python 3.10–3.12
 - [uv](https://docs.astral.sh/uv/)
-- HuggingFace CLI (recommended, no Amazon AWS account required) or AWS CLI (for downloading model weights and dependencies)
+- No command-line client is required for model weights or dependencies; the AWS CLI is optional for CpGCorpus dataset downloads
 
 ### Installation Instructions
 
@@ -68,10 +68,41 @@ pip install CpGPT
 
 ### Downloading Model Weights & Dependencies
 
-Model weights and pre-computed dependencies are publicly hosted on **HuggingFace** (recommended — no Amazon AWS account required) and mirrored on AWS S3. The HuggingFace route grabs the pre-trained checkpoints (`cpgpt-models`), human DNA embeddings (`cpgpt-human-dependencies`), and mammalian DNA embeddings (`cpgpt-mammalian-dependencies`) through the standard `huggingface-cli` — no AWS sign-up, credit card, or `--request-payer` flag needed.
+Model weights and pre-computed dependencies are publicly hosted on **Hugging Face** (no Amazon AWS account required). The Python API downloads only the requested model and species resources:
+
+```python
+from cpgpt import download_cpgpt
+
+resources = download_cpgpt(model="small", species="human")
+print(resources.checkpoint_path)
+print(resources.config_path)
+print(resources.dependencies_path)
+```
+
+Repeated calls reuse files in the standard Hugging Face cache. To select a different cache root, pass `cache_dir`:
+
+```python
+cached = download_cpgpt(
+    model="small",
+    species="human",
+    cache_dir="/scratch/huggingface",
+)
+```
+
+To materialize the legacy `dependencies/model` and `dependencies/human` layout instead, pass `local_dir`:
+
+```python
+legacy = download_cpgpt(
+    model="small",
+    species="human",
+    local_dir="dependencies",
+)
+```
+
+CpGPT loaders do not start a download implicitly. They reuse resources already present in the selected cache, and missing-resource errors show the exact `download_cpgpt` helper call needed to retrieve them.
 
 <details open>
-<summary><b>Option A: HuggingFace (Recommended)</b></summary>
+<summary><b>Command-line alternative: Hugging Face CLI</b></summary>
 
 ```bash
 pip install huggingface_hub
@@ -95,9 +126,9 @@ huggingface-cli download lucascamillomd/cpgpt-models weights/small.ckpt config/s
 </details>
 
 <details closed>
-<summary><b>Option B: AWS S3</b></summary>
+<summary><b>Optional CpGCorpus Data Access via AWS S3</b></summary>
 
-Our pre-trained models and data are also stored in AWS S3. If you do not already have an AWS account setup, follow these steps:
+This optional S3 route is dataset-only access to CpGCorpus. It is not needed for model or dependency downloads, which use Hugging Face. If you do not already have an AWS account set up, follow these steps:
 
 <details closed>
 <summary><b>1. Create an AWS Account</b></summary>

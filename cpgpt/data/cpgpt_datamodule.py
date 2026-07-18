@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any
 
 from lightning import LightningDataModule
@@ -21,7 +22,7 @@ class CpGPTDataModule(LightningDataModule):
         val_dir: str | None = None,
         test_dir: str | None = None,
         predict_dir: str | None = None,
-        dependencies_dir: str = "dependencies",
+        dependencies_dir: str | Path | None = None,
         batch_size: int = 4,
         num_workers: int = 4,
         max_length: int = 10000,
@@ -29,6 +30,9 @@ class CpGPTDataModule(LightningDataModule):
         dna_context_len: int = 2001,
         sorting_strategy: str = "random",
         pin_memory: bool = False,
+        species: str = "human",
+        hf_cache_dir: str | Path | None = None,
+        hf_revision: str | None = None,
     ) -> None:
         """Initialize the CpGPT DataModule.
 
@@ -37,7 +41,8 @@ class CpGPTDataModule(LightningDataModule):
             val_dir (Optional[str]): Directory containing validation data. Defaults to None.
             test_dir (Optional[str]): Directory containing test data. Defaults to None.
             predict_dir (Optional[str]): Directory containing prediction data. Defaults to None.
-            dependencies_dir (str): Directory for model dependencies. Defaults to "dependencies".
+            dependencies_dir: Explicit directory for model dependencies. When omitted,
+                dependencies are resolved from the local Hugging Face cache.
             batch_size (int): Batch size for dataloaders. Defaults to 4.
             num_workers (int): Number of workers for data loading. Defaults to 4.
             max_length (int): Maximum sequence length. Defaults to 10000.
@@ -46,6 +51,9 @@ class CpGPTDataModule(LightningDataModule):
             dna_context_len (int): Context length for DNA sequences. Defaults to 2001.
             sorting_strategy (str): Strategy for sorting sequences. Defaults to "random".
             pin_memory (bool): Whether to pin memory in data loading. Defaults to False.
+            species: Dependency collection to resolve. Defaults to "human".
+            hf_cache_dir: Optional Hugging Face cache root.
+            hf_revision: Optional Hugging Face repository revision.
 
         """
         super().__init__()
@@ -74,7 +82,12 @@ class CpGPTDataModule(LightningDataModule):
         self.data_predict: CpGPTDataset | None = None
 
         # Initialize embedder
-        self.embedder = DNALLMEmbedder(dependencies_dir=dependencies_dir)
+        self.embedder = DNALLMEmbedder(
+            dependencies_dir=dependencies_dir,
+            species=species,
+            cache_dir=hf_cache_dir,
+            revision=hf_revision,
+        )
 
     def prepare_data(self) -> None:
         """Prepare data for training.

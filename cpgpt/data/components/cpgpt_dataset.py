@@ -11,6 +11,21 @@ from cpgpt.log.utils import get_class_logger
 from .dna_llm_embedder import DNALLMEmbedder
 
 
+def _dependency_collection_for_species(species: str) -> str:
+    """Map an Ensembl runtime species to a supported dependency collection."""
+    return "human" if species in {"human", "homo_sapiens"} else "mammalian"
+
+
+def _dependency_download_guidance(species: str) -> str:
+    dependency_collection = _dependency_collection_for_species(species)
+    return (
+        "Download the dependencies first with Python:\n"
+        "  from cpgpt import download_cpgpt\n"
+        f"  resources = download_cpgpt(species='{dependency_collection}', "
+        "force_download=True)"
+    )
+
+
 class CpGPTDataset(Dataset):
     """A custom PyTorch Dataset for handling CpG methylation data with DNA embeddings.
 
@@ -214,35 +229,27 @@ class CpGPTDataset(Dataset):
                     f"DNA embeddings directory is missing: {dna_embeddings_dir}\n"
                     f"This suggests that dependencies for species '{species}' were not downloaded "
                     f"or the download was incomplete.\n\n"
-                    f"To fix this issue, run:\n"
-                    f"  inferencer.download_dependencies(species='{species}', overwrite=True)\n\n"
-                    f"The 'overwrite=True' parameter ensures all files are re-downloaded even if "
-                    f"the directory structure exists."
+                    f"{_dependency_download_guidance(species)}"
                 )
             elif not species_dir.exists():
                 error_msg = (
                     f"Species directory is missing: {species_dir}\n"
                     f"Dependencies for species '{species}' were not downloaded or are incomplete.\n\n"
-                    f"To fix this issue, run:\n"
-                    f"  inferencer.download_dependencies(species='{species}', overwrite=True)"
+                    f"{_dependency_download_guidance(species)}"
                 )
             elif not llm_dir.exists():
                 error_msg = (
                     f"DNA language model directory is missing: {llm_dir}\n"
                     f"Dependencies for species '{species}' and model '{self.dna_llm}' were not "
                     f"downloaded or are incomplete.\n\n"
-                    f"To fix this issue, run:\n"
-                    f"  inferencer.download_dependencies(species='{species}', overwrite=True)"
+                    f"{_dependency_download_guidance(species)}"
                 )
             else:
                 error_msg = (
                     f"DNA embeddings file is missing: {embeddings_file}\n"
                     f"This specific embeddings file for {self.dna_context_len}bp context length "
                     f"was not downloaded or is corrupted.\n\n"
-                    f"To fix this issue, run:\n"
-                    f"  inferencer.download_dependencies(species='{species}', overwrite=True)\n\n"
-                    f"The 'overwrite=True' parameter ensures all files are re-downloaded even if "
-                    f"some files appear to exist."
+                    f"{_dependency_download_guidance(species)}"
                 )
 
             self.logger.error(error_msg)
@@ -263,9 +270,7 @@ class CpGPTDataset(Dataset):
             error_msg = (
                 f"Failed to open DNA embeddings file: {embeddings_file}\n"
                 f"The file may be corrupted or incomplete. Original error: {e}\n\n"
-                f"To fix this issue, run:\n"
-                f"  inferencer.download_dependencies(species='{species}', overwrite=True)\n\n"
-                f"This will re-download all dependency files, including the embeddings."
+                f"{_dependency_download_guidance(species)}"
             )
             self.logger.error(error_msg)
             raise FileNotFoundError(error_msg) from e
