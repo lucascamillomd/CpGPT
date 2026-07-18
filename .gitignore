@@ -225,9 +225,16 @@ AGENTS.md
 /scripts/
 /tests/
 /tutorials/*
+!/tutorials/attend.ipynb
+!/tutorials/convert_array.ipynb
+!/tutorials/denoise.ipynb
+!/tutorials/finetune.ipynb
+!/tutorials/generate.ipynb
+!/tutorials/impute.ipynb
+!/tutorials/predict_mortality.ipynb
+!/tutorials/quick_setup copy.ipynb
 !/tutorials/quick_setup.ipynb
 !/tutorials/reference_map.ipynb
-!/tutorials/predict_mortality.ipynb
 /docker/
 /.github/
 /configs/data/*
