@@ -101,7 +101,7 @@ legacy = download_cpgpt(
 
 CpGPT loaders do not start a download implicitly. They reuse resources already present in the selected cache, and missing-resource errors show the exact `download_cpgpt` helper call needed to retrieve them.
 
-<details open>
+<details>
 <summary><b>Command-line alternative: Hugging Face CLI</b></summary>
 
 ```bash
