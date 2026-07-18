@@ -132,33 +132,16 @@ explicit = true
 nucleotide-transformer = { git = "https://github.com/instadeepai/nucleotide-transformer" }
 
 [tool.hatch.build.targets.sdist]
-exclude = [
-    "tutorials/*",
-    "analysis/*",
-    "pyaging_data/*",
-    "dependencies/*",
-    "data/*",
-    "tests/*",
-    "configs/*",
-    "**/.DS_Store",
-]
+only-include = ["cpgpt"]
 
 [tool.hatch.build.targets.sdist.force-include]
 "README.md" = "README.md"
+"LICENSE" = "LICENSE"
 ".project-root" = ".project-root"
 "uv.lock" = "uv.lock"
 
 [tool.hatch.build.targets.wheel]
-exclude = [
-    "tutorials/*",
-    "analysis/*",
-    "pyaging_data/*",
-    "dependencies/*",
-    "data/*",
-    "tests/*",
-    "configs/*",
-    "**/.DS_Store",
-]
+only-include = ["cpgpt"]
 
 [build-system]
 requires = ["hatchling"]
