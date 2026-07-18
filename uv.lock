@@ -1225,7 +1225,7 @@ toml = [
 
 [[package]]
 name = "cpgpt"
-version = "0.0.8"
+version = "0.0.9"
 source = { editable = "." }
 dependencies = [
     { name = "biopython" },
@@ -1242,7 +1242,6 @@ dependencies = [
     { name = "litlogger" },
     { name = "litmodels" },
     { name = "loguru" },
-    { name = "nucleotide-transformer" },
     { name = "pyaging" },
     { name = "pyarrow" },
     { name = "pyfaidx" },
@@ -1278,6 +1277,7 @@ dev = [
     { name = "lion-pytorch" },
     { name = "llvmlite" },
     { name = "nbformat" },
+    { name = "nucleotide-transformer" },
     { name = "nvitop" },
     { name = "openpyxl" },
     { name = "papermill" },
@@ -1317,7 +1317,6 @@ requires-dist = [
     { name = "litlogger", specifier = ">=0.1.7" },
     { name = "litmodels", specifier = ">=0.1.8" },
     { name = "loguru", specifier = ">=0.7.2" },
-    { name = "nucleotide-transformer", git = "https://github.com/instadeepai/nucleotide-transformer" },
     { name = "pyaging", specifier = ">=0.1.28" },
     { name = "pyarrow", specifier = ">=20.0.0" },
     { name = "pyfaidx", specifier = ">=0.8.1.2" },
@@ -1353,6 +1352,7 @@ dev = [
     { name = "lion-pytorch", specifier = ">=0.2.3,<0.3" },
     { name = "llvmlite", specifier = ">=0.44.0,<0.45" },
     { name = "nbformat", specifier = ">=5.10.4,<6" },
+    { name = "nucleotide-transformer", git = "https://github.com/instadeepai/nucleotide-transformer" },
     { name = "nvitop", specifier = ">=1.3.2" },
     { name = "openpyxl", specifier = ">=3.1.5,<4" },
     { name = "papermill", specifier = ">=2.6.0,<3" },

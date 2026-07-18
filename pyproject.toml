@@ -1,6 +1,6 @@
 [project]
 name = "CpGPT"
-version = "0.0.8"
+version = "0.0.9"
 description = "CpGPT: A Foundation Model for DNA Methylation"
 authors = [{ name = "Lucas Paulo de Lima Camillo", email = "lucas_camillo@alumni.brown.edu" }]
 requires-python = ">=3.10,<3.14"
@@ -27,7 +27,6 @@ dependencies = [
     "ipywidgets>=8.1.5",
     "lifelines>=0.29.0",
     "pyarrow>=20.0.0",
-    "nucleotide-transformer",
     "litmodels>=0.1.8",
     "litlogger>=0.1.7",
     "leidenalg>=0.11.0",
@@ -85,6 +84,7 @@ dev = [
     "boruta>=0.4.3,<0.5",
     "gdown>=5.2.0,<6",
     "pymupdf>=1.27.2.3",
+    "nucleotide-transformer",
 ]
 
 [tool.uv]
