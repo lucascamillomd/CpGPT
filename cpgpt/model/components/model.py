@@ -11,10 +11,9 @@ try:
 except ImportError:
     MAMBA_AVAILABLE = False
 
-from torchtune.modules import RotaryPositionalEmbeddings
-
 from cpgpt.model.utils import m_to_beta
 
+from .rotary import RotaryPositionalEmbeddings
 from .modules import (
     AbsolutePositionalEncoding,
     ChromosomePositionalEncoding,

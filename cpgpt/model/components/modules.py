@@ -5,7 +5,8 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn import Dropout, Linear, MultiheadAttention
-from torchtune.modules import RotaryPositionalEmbeddings
+
+from .rotary import RotaryPositionalEmbeddings
 
 
 @torch.no_grad()
