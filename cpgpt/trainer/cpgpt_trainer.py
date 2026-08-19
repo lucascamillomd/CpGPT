@@ -1,3 +1,5 @@
+import warnings
+
 import torch
 from lightning.pytorch import Trainer
 from lightning.pytorch.callbacks import RichProgressBar
@@ -5,15 +7,40 @@ from lightning.pytorch.core.datamodule import LightningDataModule
 from torch import Tensor
 from torch.utils.data import DataLoader
 
+from cpgpt.model.components.legacy_numerics import enable_legacy_numerics
+
+DEFAULT_PRECISION = "16-mixed"
+
 
 class CpGPTTrainer(Trainer):
     """Custom trainer class for CpGPT model.
 
     Extends PyTorch Lightning's Trainer with custom prediction functionality.
+
+    Precision defaults to ``"16-mixed"``: the released CpGPT checkpoints were trained
+    and validated under 16-mixed autocast, and (together with the legacy-numerics
+    shim) this keeps predictions bit-identical to the published torch-2.6 CUDA
+    outputs. Overriding it changes predictions and is warned against.
     """
 
     def __init__(self, **kwargs) -> None:
         """Initialize the trainer with RichProgressBar callback if progress bar is enabled."""
+        # Reproduce the torch<=2.6 RMSNorm numerics the checkpoints were trained with.
+        enable_legacy_numerics()
+
+        if "precision" not in kwargs:
+            kwargs["precision"] = DEFAULT_PRECISION
+        elif str(kwargs["precision"]) != DEFAULT_PRECISION:
+            warnings.warn(
+                f"CpGPTTrainer precision={kwargs['precision']!r} differs from the "
+                f"validated default {DEFAULT_PRECISION!r}. CpGPT checkpoints were "
+                "trained and evaluated under 16-mixed autocast; other settings "
+                "produce predictions that are NOT reproducible against published "
+                "CpGPT results.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         # Only add RichProgressBar if progress bars are enabled (default is True)
         enable_progress_bar = kwargs.get("enable_progress_bar", True)
 

@@ -9,7 +9,7 @@
 [![PyTorch 2.5+](https://img.shields.io/badge/torch-2.5+-ee4c2c.svg)](https://pytorch.org/get-started/locally/)
 [![Lightning 2.5+](https://img.shields.io/badge/lightning-2.5+-792ee5.svg)](https://lightning.ai/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![arXiv](https://img.shields.io/badge/bioRxiv-2024.10.24.619766-b31b1b.svg)](https://www.biorxiv.org/content/10.1101/2024.10.24.619766v1)
+[![arXiv](https://img.shields.io/badge/bioRxiv-2024.10.24.619766-b31b1b.svg)](https://www.biorxiv.org/content/10.1101/2024.10.24.619766v5)
 [![HuggingFace](https://img.shields.io/badge/%F0%9F%A4%97_HuggingFace-Models-yellow.svg)](https://huggingface.co/lucascamillomd/cpgpt-models)
 
 [![Typing SVG](https://readme-typing-svg.herokuapp.com?font=Fira+Code&pause=1000&color=2E98FF&center=true&vCenter=true&width=600&lines=A+foundation+model+for+DNA+methylation;Generate%2C+impute%2C+and+embed+methylation+profiles;Fine-tune+for+epigenetics+and+aging+research;CpGCpGCpGCpGCpGCpGCpGCpGCpGCpGCpGCpG)](https://github.com/lucascamillomd/CpGPT)
@@ -547,7 +547,7 @@ If you use CpGPT in your research, please cite our paper:
   journal={bioRxiv},
   year={2024},
   doi={10.1101/2024.10.24.619766},
-  url={https://www.biorxiv.org/content/10.1101/2024.10.24.619766v1}
+  url={https://www.biorxiv.org/content/10.1101/2024.10.24.619766v5}
 }
 ```
 

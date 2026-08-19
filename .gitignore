@@ -236,7 +236,12 @@ AGENTS.md
 !/tutorials/quick_setup.ipynb
 !/tutorials/reference_map.ipynb
 /docker/
-/.github/
+# Keep private CI config out of the public repo, except the PyPI
+# trusted-publishing workflow which must exist here to publish releases.
+/.github/*
+!/.github/workflows/
+/.github/workflows/*
+!/.github/workflows/release.yaml
 /configs/data/*
 !/configs/data/default.yaml
 /configs/experiment/*

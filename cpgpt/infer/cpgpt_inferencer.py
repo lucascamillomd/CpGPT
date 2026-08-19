@@ -7,6 +7,7 @@ from omegaconf import OmegaConf
 
 from cpgpt.downloads import DownloadedCpGPTResources, download_cpgpt, resolve_cached_model
 from cpgpt.log.utils import get_class_logger
+from cpgpt.model.components.legacy_numerics import enable_legacy_numerics
 from cpgpt.model.cpgpt_module import CpGPTLitModule
 
 
@@ -38,6 +39,9 @@ class CpGPTInferencer:
 
         """
         self.logger = get_class_logger(self.__class__)
+        # Reproduce the torch<=2.6 RMSNorm numerics the released checkpoints were
+        # trained with, so 16-mixed predictions stay bit-identical across torch versions.
+        enable_legacy_numerics()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dependencies_dir = dependencies_dir
         self.data_dir = data_dir

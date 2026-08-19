@@ -1,3 +1,4 @@
+from .legacy_numerics import disable_legacy_numerics, enable_legacy_numerics
 from .model import CpGPT
 from .modules import (
     AbsolutePositionalEncoding,
@@ -18,4 +19,6 @@ __all__ = [
     "SwiGLU",
     "TransformerPPBlock",
     "create_hic_attention_mask",
+    "disable_legacy_numerics",
+    "enable_legacy_numerics",
 ]
