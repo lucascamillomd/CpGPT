@@ -490,6 +490,12 @@ class CpGPTLitModule(LightningModule):
         # Step 2: Initialize Input Masks
         current_input_masks = self._initialize_input_masks(meth, mask_na, n_splits)
 
+        # Reuse only within this evaluation call. Training retains the original
+        # encoder-call ordering and separate computations.
+        full_sequence_embeddings = None
+        if not self.training:
+            full_sequence_embeddings = self.net.encode_sequence(batch["dna_embeddings"])
+
         # Step 3: Prepare Input Data
         input_data = self._pad_input_data(
             batch,
@@ -497,10 +503,12 @@ class CpGPTLitModule(LightningModule):
             mask_na,
             current_input_masks,
             binarize_input=self.hparams.training.get("binarize_input", False),
+            sequence_embeddings=full_sequence_embeddings,
         )
 
         # Step 4: Forward Pass
-        full_sequence_embeddings = self.net.encode_sequence(batch["dna_embeddings"])
+        if full_sequence_embeddings is None:
+            full_sequence_embeddings = self.net.encode_sequence(batch["dna_embeddings"])
         loss_inputs = {"meth": meth_original, "mask_na": mask_na}
         loss_inputs = self._forward_pass(
             batch,
@@ -592,6 +600,12 @@ class CpGPTLitModule(LightningModule):
         # Step 2: Initialize Input Masks
         current_input_masks = self._initialize_input_masks(meth, mask_na, n_splits)
 
+        # Reuse only within this evaluation call. Training retains the original
+        # encoder-call ordering and separate computations.
+        full_sequence_embeddings = None
+        if not self.training:
+            full_sequence_embeddings = self.net.encode_sequence(batch["dna_embeddings"])
+
         # Step 3: Prepare Input Data
         input_data = self._pad_input_data(
             batch,
@@ -599,10 +613,12 @@ class CpGPTLitModule(LightningModule):
             mask_na,
             current_input_masks,
             binarize_input=self.hparams.training.get("binarize_input", False),
+            sequence_embeddings=full_sequence_embeddings,
         )
 
         # Step 4: Forward Pass
-        full_sequence_embeddings = self.net.encode_sequence(batch["dna_embeddings"])
+        if full_sequence_embeddings is None:
+            full_sequence_embeddings = self.net.encode_sequence(batch["dna_embeddings"])
         output_dictionary = {
             "meth": meth,
             "mask_na": mask_na,
@@ -765,6 +781,7 @@ class CpGPTLitModule(LightningModule):
         mask_na: torch.Tensor,
         current_input_masks: torch.Tensor,
         binarize_input: bool = False,
+        sequence_embeddings: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """Prepares input data with padding to handle variable-length sequences.
 
@@ -776,6 +793,8 @@ class CpGPTLitModule(LightningModule):
                 sites per sample
             binarize_input (bool, optional): Whether to binarize the methylation input.
                 Defaults to False.
+            sequence_embeddings: Optional sequence encoding computed for this call. When
+                omitted, the method preserves the existing encoding path.
 
         Returns:
             Dict[str, torch.Tensor]: Dictionary containing input data tensors with padding
@@ -785,7 +804,8 @@ class CpGPTLitModule(LightningModule):
         inputs = ["meth", "sequence_embeddings", "chroms", "positions", "mask_na"]
         input_tensors = {key: [] for key in inputs}
 
-        sequence_embeddings = self.net.encode_sequence(batch["dna_embeddings"])
+        if sequence_embeddings is None:
+            sequence_embeddings = self.net.encode_sequence(batch["dna_embeddings"])
 
         for i in range(batch_size):
             mask = current_input_masks[i]

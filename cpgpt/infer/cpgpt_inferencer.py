@@ -1,3 +1,4 @@
+import zipfile
 from pathlib import Path
 
 import boto3
@@ -442,7 +443,12 @@ class CpGPTInferencer:
                 raise FileNotFoundError(msg)
 
             self.logger.info(f"Loading checkpoint from: {model_ckpt_path}")
-            checkpoint = torch.load(ckpt_path_obj, map_location=self.device, weights_only=False)
+            checkpoint = torch.load(
+                ckpt_path_obj,
+                map_location="cpu",
+                weights_only=False,
+                mmap=zipfile.is_zipfile(ckpt_path_obj),
+            )
             state_dict = checkpoint["state_dict"]
             cleaned_state_dict = {
                 k.replace("net._orig_mod.", "net."): v for k, v in state_dict.items()

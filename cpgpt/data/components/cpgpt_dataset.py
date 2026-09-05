@@ -9,6 +9,7 @@ from torch.utils.data import Dataset
 from cpgpt.log.utils import get_class_logger
 
 from .dna_llm_embedder import DNALLMEmbedder
+from .file_cache import DatasetFileCache
 
 
 def _dependency_collection_for_species(species: str) -> str:
@@ -105,6 +106,7 @@ class CpGPTDataset(Dataset):
         self.seed = seed
         self.rng = np.random.default_rng(seed)
         self.logger = get_class_logger(self.__class__)
+        self._file_cache = DatasetFileCache()
 
         self._load_dataset_metrics()
 
@@ -160,25 +162,24 @@ class CpGPTDataset(Dataset):
 
             unique_chroms, chrom_indices = np.unique(chroms, return_inverse=True)
 
-            sorted_indices = []
-            for chrom in unique_chroms:
-                chrom_mask = chrom_indices == np.where(unique_chroms == chrom)[0][0]
-                chrom_positions = positions[chrom_mask]
+            groups = {}
+            for chrom_index, chrom in enumerate(unique_chroms):
+                indices = np.flatnonzero(chrom_indices == chrom_index)
+                chrom_positions = positions[indices]
                 if "sorted" in self.sorting_strategy:
-                    sorted_chrom_indices = np.argsort(chrom_positions)
+                    order = np.argsort(chrom_positions)
                 elif "random" in self.sorting_strategy:
-                    sorted_chrom_indices = self.rng.permutation(len(chrom_positions))
-                sorted_indices.extend(np.where(chrom_mask)[0][sorted_chrom_indices])
+                    order = self.rng.permutation(len(chrom_positions))
+                groups[chrom] = indices[order]
 
             # Shuffle chromosomes
             shuffled_chroms = self.rng.permutation(unique_chroms)
 
-            # Apply the shuffle order to sorted indices
-            final_sorted_indices = []
-            for chrom in shuffled_chroms:
-                chrom_mask = chroms == chrom
-                chrom_sorted_indices = [i for i in sorted_indices if chrom_mask[i]]
-                final_sorted_indices.extend(chrom_sorted_indices)
+            final_sorted_indices = (
+                np.concatenate([groups[chrom] for chrom in shuffled_chroms])
+                if len(shuffled_chroms)
+                else np.empty(0, dtype=np.intp)
+            )
 
             X = X[final_sorted_indices]
             var = var[final_sorted_indices]
@@ -260,10 +261,9 @@ class CpGPTDataset(Dataset):
         ]
 
         try:
-            embeddings = np.memmap(
+            embeddings = self._dataset_file_cache().open_map(
                 embeddings_file,
                 dtype="float32",
-                mode="r",
                 shape=(len(embeddings_index_dict), embedding_size),
             )
         except (OSError, ValueError) as e:
@@ -292,6 +292,14 @@ class CpGPTDataset(Dataset):
             raise KeyError(error_msg) from e
 
         return embeddings[embedding_indices]
+
+    def _dataset_file_cache(self) -> DatasetFileCache:
+        """Return this dataset's cache, including legacy ``__new__`` fixtures."""
+        cache = getattr(self, "_file_cache", None)
+        if cache is None:
+            cache = DatasetFileCache()
+            self._file_cache = cache
+        return cache
 
     def __len__(self) -> int:
         """Return the total number of samples across all files.
@@ -331,7 +339,8 @@ class CpGPTDataset(Dataset):
 
             # Load dataset shape
             X_shape_file = dataset_dir / "X_shape.npy"
-            X_shape = np.load(X_shape_file, allow_pickle=True)
+            cache = self._dataset_file_cache()
+            X_shape = cache.load_array(X_shape_file, allow_pickle=True)
             n_obs, n_features = X_shape
 
             if idx < n_obs:
@@ -344,24 +353,23 @@ class CpGPTDataset(Dataset):
                 obsm_names_file = dataset_dir / "obsm_names.npy"
 
                 # Load metadata
-                var_names = np.load(var_names_file, allow_pickle=True)
-                species = str(np.load(species_file, allow_pickle=True))
+                var_names = cache.load_array(var_names_file, allow_pickle=True)
+                species = str(cache.load_array(species_file, allow_pickle=True))
                 obsm_names = (
-                    np.load(obsm_names_file, allow_pickle=True)
+                    cache.load_array(obsm_names_file, allow_pickle=True)
                     if Path.exists(obsm_names_file)
                     else None
                 )
 
                 # Load data using memory mapping
-                X = np.memmap(X_file, dtype="float32", mode="r", shape=(n_obs, n_features))
-                var = np.memmap(
+                X = cache.open_map(X_file, dtype="float32", shape=(n_obs, n_features))
+                var = cache.open_map(
                     var_file,
                     dtype="int32",
-                    mode="r",
                     shape=(n_features, len(var_names)),
                 )
                 obsm = (
-                    np.memmap(obsm_file, dtype="float32", mode="r", shape=(n_obs, len(obsm_names)))
+                    cache.open_map(obsm_file, dtype="float32", shape=(n_obs, len(obsm_names)))
                     if Path.exists(obsm_file)
                     else None
                 )
@@ -394,7 +402,9 @@ class CpGPTDataset(Dataset):
                 # Convert to PyTorch tensors
                 X = torch.tensor(X, dtype=torch.float32)
                 var = torch.tensor(var, dtype=torch.int32)
-                embeddings = torch.tensor(embeddings, dtype=torch.float32)
+                # Advanced indexing in _get_dna_embeddings returns a separate,
+                # writable float32 gather, so PyTorch can safely share its buffer.
+                embeddings = torch.from_numpy(embeddings)
                 obsm = torch.tensor(obsm, dtype=torch.float32) if obsm is not None else None
 
                 # Split var into chrom and pos
